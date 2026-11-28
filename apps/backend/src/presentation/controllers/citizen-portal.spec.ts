@@ -1,4 +1,4 @@
-import type { ReportingService } from '../../application/features/reporting/reporting.service';
+import type { CitizenProfileService } from '../../application/features/reporting/citizen-profile.service';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { CitizenController } from './citizen.controller';
 
@@ -23,9 +23,9 @@ const OWNER = {
 };
 
 function controller(profile: unknown) {
-  const reporting = { getCitizenProfile: jest.fn().mockResolvedValue(profile) } as unknown as ReportingService;
+  const profiles = { getCitizenProfile: jest.fn().mockResolvedValue(profile) } as unknown as CitizenProfileService;
   const none = {} as never;
-  return new CitizenController(none, reporting, none, none, none, none, none, {} as never, {} as never, {} as never);
+  return new CitizenController(none, profiles, none, none, none, none, {} as never, {} as never);
 }
 
 describe('the citizen portal summary', () => {

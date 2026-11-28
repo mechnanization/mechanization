@@ -349,6 +349,7 @@
     "UNIT_STATUS_AFTER_EXIT_REQUIRED": "Set the unit’s status after the occupant leaves.",
     "NON_RESIDENT_OWNER_CANNOT_OCCUPY": "The owner of unit {unitCode} is not a household in the town (living elsewhere, an estate or a body), so they cannot be recorded as living there. Choose “Vacant” or “I don’t know”.",
     "OCCUPANCY_CHANGED_CONCURRENTLY": "This occupancy just changed. Refresh the page.",
+    "LANDLORD_LINK_NOT_OPEN": "This owner-link claim is no longer open: it was linked or dismissed, the tenancy ended, or the number no longer matches a registered citizen.",
     "LANDLORD_LINK_NOT_ON_SURVEY": "The tenant’s card is not linked to a building in the building register. Open the tenant’s file and link the card to the building and its unit first.",
     "LANDLORD_LINK_NO_UNITS": "The tenant’s card does not say which unit they live in. Open the tenant’s file and choose their unit in the building first.",
     "LANDLORD_LINK_UNIT_VACANT": "Unit{hasUnit, select, yes { {unitCode}} other {}} is confirmed vacant, and the tenant’s card says they live in it. Check the unit in the building’s matrix first.",
@@ -4382,7 +4383,8 @@
       "counts": "Citizens and lines",
       "countsValue": "{citizens} citizens, {lines} lines",
       "actions": "Actions",
-      "import": "Import the file"
+      "import": "Import the file",
+      "truncated": "Showing the latest {shown} of {total} batches."
     },
     "import": {
       "heading": "Import the batch’s file",
@@ -4588,7 +4590,8 @@
       "citizen": "Citizen file",
       "cancel": "Go back",
       "busy": "Linking…",
-      "done": "The line was linked to {name}’s file and its bill raised."
+      "done": "The line was linked to {name}’s file and its bill raised.",
+      "truncated": "Showing {shown} of {total} lines waiting to be matched. Link these, then refresh to see the rest."
     },
     "settings": {
       "link": "Settings",
@@ -4666,7 +4669,8 @@
       "colCounts": "Contents",
       "countsValue": "{citizens} files · {lines} lines",
       "colActions": "Actions",
-      "sheet": "Batch sheet"
+      "sheet": "Batch sheet",
+      "batchesTruncated": "Showing the latest {shown} of {total} approved batches."
     },
     "sheet": {
       "title": "Old-debts batch sheet",

@@ -50,6 +50,7 @@ import type {
 } from './building.types';
 import { toVacancyRow } from './unit-vacancy';
 import { settleUnit, unitsUnderReview } from './unit-status';
+import { BUILDINGS_PAGE_DEFAULT, BUILDINGS_PAGE_MAX } from '@mechanization/shared-schemas';
 
 /** What a whole-matrix save did — or, on a dry run, would do. */
 export interface MatrixSaveResult {
@@ -479,7 +480,7 @@ export class BuildingsService {
           `LIMIT`/`OFFSET` is how a row appears on two pages or on neither.
         */
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        take: filter.limit ?? 100,
+        take: Math.min(filter.limit ?? BUILDINGS_PAGE_DEFAULT, BUILDINGS_PAGE_MAX),
         skip: filter.offset ?? 0,
       }),
     );

@@ -3,6 +3,7 @@ import { internationalPhone } from '@mechanization/shared-schemas';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { CANDIDATE_SELECT, ENTRY_SELECT, LandlordCandidate, LandlordLinkService, LandlordProposal, MatchPair, PlanCitizen, fullName } from './landlord-link.service';
+import { APP_CONFIG } from '../../common/app.config';
 
 function toCandidate(citizen: {
   id: string;
@@ -118,7 +119,7 @@ export class LandlordLinkQueueService {
     items: LandlordProposal[];
     total: number;
   }> {
-    const limit = Math.min(Math.max(Math.trunc(page.limit) || 20, 1), 100);
+    const limit = Math.min(Math.max(Math.trunc(page.limit) || APP_CONFIG.pagination.ownerLinks.default, 1), APP_CONFIG.pagination.ownerLinks.max);
     const offset = Math.max(Math.trunc(page.offset) || 0, 0);
     const pairs = await this.links.matchPairs({}, { limit, offset });
     return { items: await this.hydrate(pairs), total: pairs[0]?.total ?? 0 };

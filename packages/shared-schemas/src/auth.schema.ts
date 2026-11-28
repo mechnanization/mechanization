@@ -220,12 +220,23 @@ export const changeEmailSchema = z.object({
 export type ChangeEmail = z.infer<typeof changeEmailSchema>;
 
 /**
+ * «إرسال رابط إعادة التعيين» from «أمان الحساب»: the page the link should open.
+ * The API keeps it only when it is on the portal's own origin (`resetLink`), so
+ * it is a bounded string here and judged there (audit SEC-03: the body was read
+ * raw).
+ */
+export const sendResetPasswordEmailSchema = z.object({
+  redirectTo: z.string().trim().max(2048).optional(),
+});
+export type SendResetPasswordEmail = z.infer<typeof sendResetPasswordEmailSchema>;
+
+/**
  * Setting a new password from the link in a "send-reset-password-email".
  *
- * `accessToken` is the Supabase recovery session token Supabase's own
- * `/auth/v1/verify` redirect appends to the landing page's URL fragment —
- * proof the link's owner passed Supabase's own OTP check, not a password the
- * server can verify on its own the way `changePasswordSchema` does.
+ * `accessToken` is the token the API signed into the link it mailed, read from
+ * the link's fragment (`password-reset-link`, task S14): it names the account
+ * and expires, so it is not a password the server checks the way
+ * `changePasswordSchema` does.
  */
 export const confirmPasswordResetSchema = z.object({
   accessToken: z.string().min(1, 'رابط إعادة التعيين غير صالح أو منتهي الصلاحية'),

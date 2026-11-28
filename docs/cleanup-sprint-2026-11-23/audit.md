@@ -214,7 +214,9 @@ Each extraction below is a move with no behaviour change, its own spec where the
 After GOD-01 to GOD-05 (2026-11-27, with ARCH-03): `fees.service.ts` 3,677, `buildings.service.ts` 4,755; the four fee
 services and `occupancy-writes.service.ts` 1,128. After GOD-06 to GOD-10 (2026-11-27): `buildings.service.ts` 2,877
 (`units.service.ts` 1,466, `unit-visits.service.ts` 550), `landlord-link.service.ts` 2,874 (`landlord-unlink.service.ts`
-549, `landlord-link-queue.service.ts` 294), `citizens.service.ts` 3,298 (`citizen-duplicates.service.ts` 297).
+549, `landlord-link-queue.service.ts` 294), `citizens.service.ts` 3,298 (`citizen-duplicates.service.ts` 297). After GOD-11 to
+GOD-13 (2026-11-28): `citizens.service.ts` 3,123 (`citizen-import.service.ts` 199), `reporting.service.ts` 1,141
+(`citizen-profile.service.ts` 1,182), `citizen.controller.ts` 630 (`citizen-landlord-links.controller.ts` 206).
 
 ## [GOD-01] Extract the Whish checkout and callback out of FeesService
 - **Priority:** P2 · **Assignee:** Hashem · **Estimate:** L · **Category:** God-files
@@ -295,6 +297,9 @@ services and `occupancy-writes.service.ts` 1,128. After GOD-06 to GOD-10 (2026-1
 - **Files:** `citizens.service.ts` `importMany` (1815–1941) → `citizens/citizen-import.service.ts`.
 - **Depends on:** none
 - **Acceptance criteria / Verification:** moved intact; import specs; `wc -l`.
+- **Done 2026-11-28:** `CitizenImportService` (`citizens/citizen-import.service.ts`, 199 lines) holds `importMany` with
+  `columnHeaderFor` and `importFailure`, moved by script and unchanged but for `this.citizens.create` and two comments
+  re-indented; `CitizenController.import` and `citizen-filing.integration.spec.ts` call it. `citizens.service.ts` 3,298 → 3,123.
 
 ## [GOD-12] Extract the citizen profile read out of ReportingService
 - **Priority:** P2 · **Assignee:** Hashem · **Estimate:** M · **Category:** God-files
@@ -303,6 +308,13 @@ services and `occupancy-writes.service.ts` 1,128. After GOD-06 to GOD-10 (2026-1
 - **Acceptance criteria:** moved intact; profile specs and `mySummary` tests pass.
 - **Depends on:** none
 - **Verification:** backend tests.
+- **Done 2026-11-28:** `CitizenProfileService` (`reporting/citizen-profile.service.ts`) holds `getCitizenProfile`,
+  `computeCitizenProfile`, `profileHeldUnits`, the `CitizenProfile*` types, `billedBareCards`, `exemptionToday`, `personName`
+  and `profileOwnerBilling`. Its cache key stays `dashboard:<slug>:citizen:<id>` through `dashboardCacheKey`, which
+  `ReportingService` now builds its own keys and its invalidation prefix with, so the events that cleared the profile still do.
+  `CitizenController` takes it in place of `ReportingService`, which it used for nothing else; seven integration specs and
+  `citizen-portal.spec.ts` read the profile through it. `reporting.service.ts` 2,278 → 1,141. The `profileOwnerBilling` row
+  (code-quality.md) is not fixed here, as the task said: it moved with the function.
 
 ## [GOD-13] Move the owner-link routes out of CitizenController
 - **Priority:** P3 · **Assignee:** Hashem · **Estimate:** S · **Category:** God-files
@@ -311,6 +323,14 @@ services and `occupancy-writes.service.ts` 1,128. After GOD-06 to GOD-10 (2026-1
 - **Acceptance criteria:** 1. Same paths, same `@Roles`. 2. `route-inventory.spec.ts` and `cross-tenant-routes.spec.ts` pass.
 - **Depends on:** SEC-03 (convert the raw bodies first)
 - **Verification:** backend tests; apps/backend/CLAUDE.md and security.md updated (presentation row of the docs table).
+- **Done 2026-11-28 (with SEC-03, pulled in for it):** `CitizenLandlordLinksController` holds the nine owner-link routes.
+  The citizens route table (method, path, roles, self-service, handler) was dumped before and after the move: identical,
+  32 routes. Registered before `CitizenController` in `PresentationModule`, since Nest matches controller by controller;
+  `citizen-routes-order.spec.ts` checks every pair of controllers sharing a path for a `:param` route that would answer a
+  later literal one (it fails, naming `CitizenController.getById answers CitizenLandlordLinksController.landlordLinks`, when
+  the two are swapped). The route inventory's "no route deletes a citizen" filters by path now, not by class. The three prose
+  throws of the two controllers coded (`CITIZEN_NOT_FOUND` twice, the new `LANDLORD_LINK_NOT_OPEN`; the claim page reads the
+  404 by status, unchanged), the ratchet 181 → 178. `citizen.controller.ts` 810 → 630.
 
 ## [GOD-14] Move apiFetch, the session and token renewal out of api-client.ts
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** M · **Category:** God-files
@@ -451,6 +471,13 @@ income, transfers, treasury movements and `ExpensesService`. Arrears controller:
 - **Acceptance criteria:** 1. Each response carries `total` (or `more`), or the routes page with `queryLimit`/`queryOffset`. 2. The frontend says «عرض N من M» (Abed, same PR or a follow-up).
 - **Depends on:** none
 - **Verification:** arrears integration specs; a spec seeding > cap.
+- **Done 2026-11-28 (both halves):** the two routes take `limit` / `offset` and answer `{ items, total }`
+  (`ArrearsBatchPage`, `ArrearsUnmatchedPage`), their defaults the old cuts (`ARREARS_BATCHES_PAGE_DEFAULT` 200, max 500;
+  `ARREARS_UNMATCHED_PAGE_DEFAULT` and max 1,000), so nothing a screen saw before is lost; `id` breaks the batches'
+  `createdAt` tie. `ArrearsReport.approvedBatchCount` counts the approved batches beside the latest
+  `ARREARS_REPORT_BATCHES_MAX`. «المتأخرات», «أسطر للمطابقة» and «تقرير المتأخرات» say «معروض N من أصل M» when there are
+  more. `review` stays unbounded per batch, as the task says, held by `ARREARS_IMPORT_MAX_ROWS`. The integration suite
+  pages through with `limit: 1` / `limit: 2` and checks `total` and that no row repeats.
 
 ## [PAG-07] Put the page caps in one place
 - **Priority:** P3 · **Assignee:** Hashem · **Estimate:** S · **Category:** Pagination
@@ -459,6 +486,14 @@ income, transfers, treasury movements and `ExpensesService`. Arrears controller:
 - **Acceptance criteria:** `APP_CONFIG.pagination.{default,max,…}` named per register.
 - **Depends on:** ARCH-07
 - **Verification:** grep for the literals → 0.
+- **Done 2026-11-28:** `APP_CONFIG.pagination` (`citizens`, `history`, `audit`, `ownerLinks`, `correctionBills`,
+  `recordReviews`, `qualityChecks`, `collectorCollections`, and `duplicateLookupRows`, a scan bound) for the pages only the
+  backend decides, read by the controller's `queryLimit` and by the service's clamp; `BUILDINGS_PAGE_*`, `WORKLIST_PAGE_*`
+  and `TRANSFERS_PAGE_*` beside the shared schemas that bound them, which the services' clamps now read. The string defaults
+  (`limit = '50'`, `'30'`, `'200'`, `offset = '0'`) on the audit, history and citizens routes went too. The grep
+  (`MAX_LIST_ROWS`, `MAX_DUPLICATE_LOOKUP_ROWS`, `MAX_PAGE`, `queryLimit(…, N, N)`, the clamps' literals) → 0. What moves:
+  «مراجعة السجلات» took 200 at the door and served 100, now 100 on both; `CitizensService.reviewQueue` clamped to 500 where
+  its schema allows 100, now 100.
 
 ---
 
@@ -588,6 +623,12 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Acceptance criteria:** `ZodValidationPipe` with shared schemas; `grep -rnE "@Body\((\)|'[a-zA-Z]+'\))" apps/backend/src/presentation/controllers | grep -v spec` → 0.
 - **Depends on:** none
 - **Verification:** the grep; specs for a malformed body → 400.
+- **Done 2026-11-28:** `confirmLandlordLinkSchema` and `landlordLinkCandidatesSchema` (shared `landlord-link.schema.ts`, at
+  most `LANDLORD_LINK_CANDIDATES_MAX` ids; an empty list is still refused by the service with `DISMISS_CANDIDATES_REQUIRED`),
+  and `sendResetPasswordEmailSchema` (`auth.schema.ts`). The grep → 0. `citizen-landlord-links-bodies.spec.ts` runs each
+  handler's own pipe on malformed bodies (22 cases, each a `ValidationError`, a 400), and `route-inventory.spec.ts` gained
+  «the bodies of every route»: a raw `@Body()` or `@Body('field')` anywhere fails it (checked by putting one back). The gap
+  row is removed from security.md.
 
 ## [SEC-04] Set trust proxy to the nginx hop and move the throttler to Redis
 - **Priority:** P1 · **Assignee:** Hashem · **Estimate:** M · **Category:** Security
@@ -1617,6 +1658,11 @@ Filled in by whoever executes a task (section 0, step 4). One row per finding; t
 | — | GOD-08 | `LandlordLinkService.revertUnits`, `ownerFileClaims`, `removeMintedCard` | The footprint revert the unlink uses is also the reconcile's on a save; moved, the two services would depend on each other | Yes: kept in `LandlordLinkService`, which the unlink service calls | — |
 | — | GOD-09 | `LandlordLinkService.matchPairs` | The task named it for the queue, but `confirm` asks it too (`ownsClaimedProperty`) | Yes: kept in `LandlordLinkService`; `hydrate`, used only by the queue reads, moved instead | — |
 | — | GOD-10 | `CitizensService.screenForDuplicates` | The check `create` and `importMany` run, and the only other caller of `reviewDuplicates` | Yes: moved with it; `CitizensService` takes the duplicates service | — |
+| PAG-08 | PAG-07 | `apps/backend/src/application/features/quality/record-review.service.ts` `listChecks` (`GET quality/checks`) | Reads `APP_CONFIG.pagination.qualityChecks.default` (200) checks and says nothing of the rest: no caller passes a limit and the answer has no total, the silent cut PAG-06 fixed for the old debts | No: a contract change on a screen of its own | [code-quality.md](../code-quality.md) Backend |
+| — | PAG-07 | `quality.controller.ts` `reviewQueue` and `RecordReviewService.queue` | The controller admitted `limit` up to 200 and the service clamped to 100, so a page of 200 asked came back with 100 and the pager's arithmetic was off | Yes: both read `APP_CONFIG.pagination.recordReviews` (100) | — (fixed) |
+| — | GOD-12 | `reporting.service.ts`: the doc comments of `CitizenProfile` and `personName` | Each sat above the wrong declaration (`CitizenProfileLandlordOf`, `exemptionToday`), stacked on its own (CODE-7) | Yes: each moved onto its own in `citizen-profile.service.ts` | — (fixed) |
+| — | SEC-03 | `packages/shared-schemas/src/auth.schema.ts` `confirmPasswordResetSchema` | Its comment described a Supabase recovery token; since task S14 the token is the one the API signs into the link's fragment (CODE-7) | Yes: rewritten | — (fixed) |
+| — | GOD-13 | `CitizenLandlordLinksController.landlordLink` | A uuid regex behind `UuidPipe`, which already refuses a non-uuid with a 400, and a comment saying a non-uuid was answered «not found» | Yes: the regex removed and the comment corrected | — (fixed) |
 | — | GOD-05 (#253) | `scripts/seed-census.ts` | Built the census services over an object-literal tenant context; after ARCH-03, `pnpm db:seed:census` would throw at the first building | Yes: fixed on #253 (runs inside a real scope) | — |
 
 ---

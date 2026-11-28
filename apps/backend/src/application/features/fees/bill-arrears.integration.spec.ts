@@ -10,7 +10,7 @@ import { PrismaAuditRepository } from '../../../infrastructure/repositories/audi
 import { AuditService } from '../audit/audit.service';
 import { ArrearsBatchService } from '../arrears/arrears-batch.service';
 import { ArrearsService } from '../arrears/arrears.service';
-import { ReportingService } from '../reporting/reporting.service';
+import { CitizenProfileService } from '../reporting/citizen-profile.service';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { citizenArrears } from './bill-arrears';
 import { FeesService } from './fees.service';
@@ -49,7 +49,7 @@ describeIfDb('old-debt bills on every read of a bill', () => {
   let context: TenantContextService;
   let fees: FeesService;
   let billLifecycle: BillLifecycleService;
-  let reporting: ReportingService;
+  let profiles: CitizenProfileService;
   let settlements: PaymentSettlementService;
 
   const ids = { accountant: randomUUID(), manager: randomUUID() };
@@ -80,7 +80,7 @@ describeIfDb('old-debt bills on every read of a bill', () => {
       invalidatePrefix: jest.fn().mockResolvedValue(undefined),
     } as never;
     ({ fees, billLifecycle } = feeServices(context, { emit: jest.fn() } as unknown as EventEmitter2, {} as never, cache, payments, audit));
-    reporting = new ReportingService(context, new EventEmitter2(), cache, { getOrThrow: () => 60 } as never);
+    profiles = new CitizenProfileService(context, cache, { getOrThrow: () => 60 } as never);
     settlements = new PaymentSettlementService(context, new EventEmitter2(), payments, audit, ledger);
     const importer = new ArrearsService(context, audit);
     const batches = new ArrearsBatchService(context, audit, importer, new EventEmitter2());
@@ -206,7 +206,7 @@ describeIfDb('old-debt bills on every read of a bill', () => {
 
   describe('the citizen’s file (`getCitizenProfile`), and what the portal makes of it', () => {
     it('gives staff the line with the old reference, and the portal the same line without it', async () => {
-      const profile = (await scoped(() => reporting.getCitizenProfile(citizenId)))!;
+      const profile = (await scoped(() => profiles.getCitizenProfile(citizenId)))!;
       const staffView = profile.payments.find((bill) => bill.id === principalBillId)!;
       expect(staffView.arrears).toMatchObject({ year: LAST, oldReference: OLD_REFERENCE });
 
@@ -219,7 +219,7 @@ describeIfDb('old-debt bills on every read of a bill', () => {
     });
 
     it('carries none on a bill the system raised', async () => {
-      const profile = (await scoped(() => reporting.getCitizenProfile(citizenId)))!;
+      const profile = (await scoped(() => profiles.getCitizenProfile(citizenId)))!;
       expect(profile.payments.find((bill) => bill.id === currentBillId)!.arrears).toBeNull();
     });
   });

@@ -1,4 +1,4 @@
-import { billedBareCards, type ProfileBillingCard } from './reporting.service';
+import { billedBareCards, type ProfileBillingCard } from './citizen-profile.service';
 
 /**
  * Which cards the file shows «معفاة» and the owners' split on — the cards

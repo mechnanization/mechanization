@@ -9,6 +9,7 @@ const report = (rows: ArrearsReport['rows']): ArrearsReport => ({
   coverage: { checked: 0, total: 0 },
   collections: [],
   batches: [],
+  approvedBatchCount: 0,
   totals: { billedCount: 0, billed: 0, collected: 0, cancelled: 0, writtenOff: 0, owed: 0, waitingCount: 0, waiting: 0 },
 });
 

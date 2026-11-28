@@ -27,6 +27,7 @@ import { UnitVisitsService } from '../buildings/unit-visits.service';
 import { LandlordLinkQueueService } from './landlord-link-queue.service';
 import { LandlordUnlinkService } from './landlord-unlink.service';
 import { CitizenDuplicatesService } from './citizen-duplicates.service';
+import { CitizenImportService } from './citizen-import.service';
 
 /**
  * Filing on a citizen's file against a real Postgres: what a save, a new
@@ -49,6 +50,7 @@ describeIfDb('filing on a citizen file', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let citizens: CitizensService;
+  let imports: CitizenImportService;
   let officerId: string;
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
@@ -79,6 +81,7 @@ describeIfDb('filing on a citizen file', () => {
     const unitVisits = new UnitVisitsService(context, cases, events, buildings);
     const occupancyWrites = new OccupancyWritesService(context, cases, events, buildings, unitVisits);
     const links = new LandlordLinkService(context, occupancyWrites, events, audit);
+    const duplicates = new CitizenDuplicatesService(context);
     citizens = new CitizensService(
       context,
       new RegistrationService(new PrismaRegistrationRepository(context), parcels, tenants as never, events),
@@ -90,8 +93,9 @@ describeIfDb('filing on a citizen file', () => {
       audit,
       new LandlordLinkQueueService(context, links),
       new LandlordUnlinkService(context, links),
-      new CitizenDuplicatesService(context),
+      duplicates,
     );
+    imports = new CitizenImportService(citizens, duplicates);
 
     officerId = randomUUID();
     await db.user.create({
@@ -183,7 +187,7 @@ describeIfDb('filing on a citizen file', () => {
         } as never,
       });
     const importRows = (rows: ImportRow[], dryRun: boolean) =>
-      within(() => citizens.importMany({ tenantSlug: 'cf', rows, startRow: 2, dryRun, actor: actor() }));
+      within(() => imports.importMany({ tenantSlug: 'cf', rows, startRow: 2, dryRun, actor: actor() }));
 
     it('fails a row that is certainly somebody on file, by code, as the import would', async () => {
       const phone = mobile();

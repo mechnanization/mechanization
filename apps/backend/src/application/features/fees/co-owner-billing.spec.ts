@@ -6,7 +6,7 @@ import {
   type OwnerBillingRule,
 } from '@mechanization/shared-schemas';
 import { assessCitizen } from './fees.service';
-import { profileOwnerBilling } from '../reporting/reporting.service';
+import { profileOwnerBilling } from '../reporting/citizen-profile.service';
 import type { BillablePropertyEntry, LinkedUnit } from '../../../domain/entities/billable-unit';
 
 /**

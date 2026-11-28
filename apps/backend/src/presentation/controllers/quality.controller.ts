@@ -32,6 +32,7 @@ import { CurrentActor } from '../decorators/current-actor.decorator';
 import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';
 import { UuidPipe } from '../pipes/uuid.pipe';
+import { APP_CONFIG } from '../../application/common/app.config';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -80,7 +81,7 @@ export class QualityController {
       states,
       officerId: optionalUuid(officerId, 'الموظف'),
       flaggedOnly: flaggedOnly === 'true',
-      limit: queryLimit(limit, 20, 200),
+      limit: queryLimit(limit, APP_CONFIG.pagination.recordReviews.default, APP_CONFIG.pagination.recordReviews.max),
       offset: queryOffset(offset),
     });
   }

@@ -8,7 +8,7 @@ import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migra
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { AuditService } from '../audit/audit.service';
-import { ReportingService } from '../reporting/reporting.service';
+import { CitizenProfileService } from '../reporting/citizen-profile.service';
 import { ExpensesService } from '../treasury/expenses.service';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { TreasuryService } from '../treasury/treasury.service';
@@ -761,14 +761,13 @@ describeIfDb('finance audit remediation', () => {
       await db.citizenRequest.update({ where: { id: request.id }, data: { citizenPaymentId: paymentId } });
 
       // The bill's page reads it off the citizen's profile, and names the request before the press.
-      const reporting = new ReportingService(
+      const profiles = new CitizenProfileService(
         context,
-        new EventEmitter2(),
         { get: async () => null, set: async () => undefined } as never,
         { getOrThrow: () => 60 } as never,
       );
       const onProfile = async () =>
-        (await scoped(() => reporting.getCitizenProfile(citizenId)))!.payments.find((row) => row.id === paymentId);
+        (await scoped(() => profiles.getCitizenProfile(citizenId)))!.payments.find((row) => row.id === paymentId);
       expect(await onProfile()).toMatchObject({
         request: { id: request.id, requestNumber: request.requestNumber, requestType: 'CLEARANCE', status: 'AWAITING_PAYMENT' },
       });

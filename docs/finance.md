@@ -1566,7 +1566,7 @@ pins is said.
   dates every registration through it, and 5,000 calls took about 0.3 s on this machine before and
   8 ms after (`lib/inspector-payouts.test.ts` counts the formatters built).
 - **One total owed across the portal** (P3, second round): «ملفّي» and «حسابي» showed the server's
-  `outstandingTotal` (`ReportingService.getCitizenProfile`), which counts a bill whose reported
+  `outstandingTotal` (`CitizenProfileService.getCitizenProfile`), which counts a bill whose reported
   transfer waits for a clerk; «الرسوم والمدفوعات» left it out, as it did on `develop`. So one citizen
   was told two totals. All three sum `citizenPaymentTotals` now, the payments page's rule, and list
   such a bill with its status; the pay dialog does not offer it either. The staff screens keep the

@@ -126,6 +126,10 @@ export const reviewTransferSchema = z.object({
 
 export type ReviewTransferInput = z.infer<typeof reviewTransferSchema>;
 
+/** A page of «سجل المناقلات» (`listTransfersQuerySchema`): the default and the most one request may ask for (PAG-07). */
+export const TRANSFERS_PAGE_DEFAULT = 50;
+export const TRANSFERS_PAGE_MAX = 200;
+
 /** The register's filters. */
 export const listTransfersQuerySchema = z
   .object({
@@ -139,7 +143,7 @@ export const listTransfersQuerySchema = z
       .optional()
       .transform((value) => value === 'true'),
     page: z.coerce.number().int().min(1).max(MAX_LIST_PAGE).default(1),
-    pageSize: z.coerce.number().int().min(1).max(200).default(50),
+    pageSize: z.coerce.number().int().min(1).max(TRANSFERS_PAGE_MAX).default(TRANSFERS_PAGE_DEFAULT),
   })
   .refine((value) => !value.from || !value.to || value.from <= value.to, {
     message: 'بداية الفترة بعد نهايتها',

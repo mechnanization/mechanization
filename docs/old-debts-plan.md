@@ -1,6 +1,6 @@
 # Old debts — «متأخرات سنوات سابقة» (code: `arrears`)
 
-Last verified against the code: `feat/arrears-bills-everywhere` (on `develop@90cebdc`), 2026-11-21; task 10, an old-debt bill read as one on every screen that shows a bill (§7); `feat/arrears-report` (on `develop@90cebdc`), 2026-11-21; task 11, «تقرير المتأخرات» and the batch sheet (§8); `feat/arrears-approval` (on `develop@c6e7462`), 2026-11-21; the cutoff year fixed once a batch is approved (`ARREARS_CUTOFF_LOCKED`, task 6), 2026-11-21.
+Last verified against the code: `refactor/cleanup-god-11-13-pag-06-07` (on `refactor/cleanup-god-06-10`, #254), 2026-11-28; the batch list and «للمطابقة» paged with their totals, the report counting every approved batch (audit PAG-06); `feat/arrears-bills-everywhere` (on `develop@90cebdc`), 2026-11-21; task 10, an old-debt bill read as one on every screen that shows a bill (§7); `feat/arrears-report` (on `develop@90cebdc`), 2026-11-21; task 11, «تقرير المتأخرات» and the batch sheet (§8); `feat/arrears-approval` (on `develop@c6e7462`), 2026-11-21; the cutoff year fixed once a batch is approved (`ARREARS_CUTOFF_LOCKED`, task 6), 2026-11-21.
 
 > **Status, 2026-11-21:** tasks 1–4 merged to `develop` (PRs #174–#177). Task 5, the backend after the import — submit,
 > return, discard, approve and the «ARR-» bills, a single line, the link of a «للمطابقة» line, the cutoff year, and «دمج
@@ -25,6 +25,11 @@ Last verified against the code: `feat/arrears-bills-everywhere` (on `develop@90c
 > `arrears_control_totals` and shows «غير مدخل» for a year with none, so «المتبقي للإدخال» appears the day a total exists, with
 > no change here. A batch has no number of its own (no column holds one, and a number is a migration), so its sheet is named by
 > a code, the first eight characters of its id.
+>
+> Audit PAG-06 (2026-11-28): `GET arrears/batches` and `GET arrears/lines/unmatched` take `limit` / `offset` and answer
+> `{ items, total }`, their defaults the cuts they made before (200 batches, 1,000 lines), and «تقرير المتأخرات» carries
+> `approvedBatchCount` beside the latest 200 approved batches. Each screen says «معروض N من أصل M» when there are more:
+> before, the 201st batch and the 1,001st line waiting for a file disappeared with nothing said.
 >
 > **Earlier status: tasks 1–4 in review, 2026-11-21, none merged.** This spec (PR #174); the migrations
 > `0107`/`0108` (`chore/migration-0107-old-debts`, PR #175); the contract in shared-schemas

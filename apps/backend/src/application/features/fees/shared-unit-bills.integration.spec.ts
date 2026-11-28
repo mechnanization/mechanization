@@ -9,7 +9,7 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { AuditService } from '../audit/audit.service';
 import { CitizensService } from '../citizens/citizens.service';
-import { ReportingService } from '../reporting/reporting.service';
+import { CitizenProfileService } from '../reporting/citizen-profile.service';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { FeesService } from './fees.service';
 import { ParcelDuesService } from './parcel-dues.service';
@@ -69,7 +69,7 @@ describeIfDb('shared unit bills', () => {
   let billLifecycle: BillLifecycleService;
   let parcelDues: ParcelDuesService;
   let settlements: PaymentSettlementService;
-  let reporting: ReportingService;
+  let profiles: CitizenProfileService;
   let citizens: CitizensService;
   const accountantId = randomUUID();
   const actor = { id: accountantId, role: 'ACCOUNTANT' };
@@ -136,9 +136,8 @@ describeIfDb('shared unit bills', () => {
     ));
     parcelDues = new ParcelDuesService(context);
     settlements = new PaymentSettlementService(context, new EventEmitter2(), payments, audit, new TreasuryLedgerService(context));
-    reporting = new ReportingService(
+    profiles = new CitizenProfileService(
       context,
-      new EventEmitter2(),
       { get: async () => null, set: async () => undefined } as never,
       { getOrThrow: () => 60 } as never,
     );
@@ -277,7 +276,7 @@ describeIfDb('shared unit bills', () => {
     expect(eldest.map((bill) => bill.id).sort()).toEqual([ownBillId, sharedBillId].sort());
     expect(await within(() => fees.listForCitizen(neighbour))).toEqual([]);
 
-    const profile = await within(() => reporting.getCitizenProfile(brothers[2]!));
+    const profile = await within(() => profiles.getCitizenProfile(brothers[2]!));
     expect(profile!.payments.map((bill) => [bill.id, bill.sharedUnit?.unitCode ?? null])).toEqual([[sharedBillId, '0001']]);
 
     const ledger = await within(() => fees.listAllPayments({ citizenId: brothers[1]! }));

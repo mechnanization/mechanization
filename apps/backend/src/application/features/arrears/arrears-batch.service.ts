@@ -6,6 +6,7 @@ import {
   municipalToday,
   sameMoney,
   type ArrearsApprovalProblem,
+  type ArrearsBatchPage,
   type ArrearsBatchReview,
   type ArrearsBatchTotalRow,
   type ArrearsBatchView,
@@ -16,6 +17,7 @@ import {
   type ArrearsSettingsView,
   type ArrearsSingleLineInput,
   type ArrearsUnmatchedLine,
+  type ArrearsUnmatchedPage,
   type DiscardArrearsBatchInput,
   type ArrearsCutoffInput,
   type LinkArrearsLineInput,
@@ -148,10 +150,19 @@ export class ArrearsBatchService {
 
   // ─────────────────────────────  reads  ─────────────────────────────
 
-  /** The batches, newest first. */
-  async list(): Promise<{ items: ArrearsBatchView[] }> {
-    const rows = await this.db.arrearsBatch.findMany({ orderBy: { createdAt: 'desc' }, take: 200, include: BATCH_VIEW_INCLUDE });
-    return { items: rows.map((row) => this.viewOf(row)) };
+  /** A page of the batches, newest first, and how many there are (PAG-06). */
+  async list(page: { limit: number; offset: number }): Promise<ArrearsBatchPage> {
+    const [rows, total] = await Promise.all([
+      this.db.arrearsBatch.findMany({
+        // `id` breaks a `createdAt` tie, so a page boundary never repeats or skips a batch.
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: page.limit,
+        skip: page.offset,
+        include: BATCH_VIEW_INCLUDE,
+      }),
+      this.db.arrearsBatch.count(),
+    ]);
+    return { items: rows.map((row) => this.viewOf(row)), total };
   }
 
   /**
@@ -236,14 +247,20 @@ export class ArrearsBatchService {
     };
   }
 
-  /** The lines of approved batches whose person is not on the register yet. */
-  async unmatched(): Promise<{ items: ArrearsUnmatchedLine[] }> {
-    const rows = await this.db.arrearsLine.findMany({
-      where: { citizenId: null, decision: 'KEEP', discardedAt: null, batch: { status: 'APPROVED' } },
-      orderBy: [{ year: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-      take: 1000,
-    });
+  /** A page of the lines of approved batches whose person is not on the register yet, and how many wait (PAG-06). */
+  async unmatched(page: { limit: number; offset: number }): Promise<ArrearsUnmatchedPage> {
+    const where: Prisma.ArrearsLineWhereInput = { citizenId: null, decision: 'KEEP', discardedAt: null, batch: { status: 'APPROVED' } };
+    const [rows, total] = await Promise.all([
+      this.db.arrearsLine.findMany({
+        where,
+        orderBy: [{ year: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+        take: page.limit,
+        skip: page.offset,
+      }),
+      this.db.arrearsLine.count({ where }),
+    ]);
     return {
+      total,
       items: rows.map((line) => ({
         id: line.id,
         batchId: line.batchId,

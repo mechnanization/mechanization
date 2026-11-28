@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { municipalToday, type ArrearsTemplateCells } from '@mechanization/shared-schemas';
+import {
+  ARREARS_BATCHES_PAGE_DEFAULT,
+  ARREARS_UNMATCHED_PAGE_DEFAULT,
+  municipalToday,
+  type ArrearsTemplateCells,
+} from '@mechanization/shared-schemas';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
@@ -313,8 +318,23 @@ describeIfDb('old debts: submit, approve, link', () => {
     });
 
     it('lists the stranger’s line for matching', async () => {
-      const { items } = await within(() => batches.unmatched());
+      const { items, total } = await within(() => batches.unmatched({ limit: ARREARS_UNMATCHED_PAGE_DEFAULT, offset: 0 }));
       expect(items).toContainEqual(expect.objectContaining({ id: unmatchedLineId, sourceName: 'غريب عن الملف', propertyNumber: property, amount: 40_000 }));
+      expect(total).toBe(items.length);
+    });
+
+    it('says how many lines wait when a page holds fewer, and pages through them without a repeat (PAG-06)', async () => {
+      const { total } = await within(() => batches.unmatched({ limit: ARREARS_UNMATCHED_PAGE_DEFAULT, offset: 0 }));
+      expect(total).toBeGreaterThanOrEqual(1);
+      const pages = [];
+      for (let offset = 0; offset < total; offset += 1) {
+        const page = await within(() => batches.unmatched({ limit: 1, offset }));
+        expect(page.total).toBe(total);
+        expect(page.items).toHaveLength(1);
+        pages.push(page.items[0]!.id);
+      }
+      expect(new Set(pages).size).toBe(total);
+      expect((await within(() => batches.unmatched({ limit: 1, offset: total }))).items).toEqual([]);
     });
   });
 
@@ -596,9 +616,18 @@ describeIfDb('old debts: submit, approve, link', () => {
       // The preparer's own drop is shown to the manager; prescription's would not be.
       expect(review.flagged).toMatchObject([{ status: 'DROP', dropReason: 'سقط بقرار المجلس' }]);
 
-      const { items } = await within(() => batches.list());
+      const { items, total } = await within(() => batches.list({ limit: ARREARS_BATCHES_PAGE_DEFAULT, offset: 0 }));
       expect(items[0]!.createdAt >= items[items.length - 1]!.createdAt).toBe(true);
       expect(items.find((item) => item.id === batch)).toMatchObject({ status: 'SUBMITTED', lineCount: 2, preparedBy: { id: ids.accountant } });
+      expect(total).toBe(items.length);
+
+      // More batches than the page: `total` says so, and the pages walk every batch once (PAG-06).
+      expect(total).toBeGreaterThan(2);
+      const first = await within(() => batches.list({ limit: 2, offset: 0 }));
+      const second = await within(() => batches.list({ limit: 2, offset: 2 }));
+      expect(first).toMatchObject({ total });
+      expect(first.items.map((item) => item.id)).toEqual(items.slice(0, 2).map((item) => item.id));
+      expect(second.items.map((item) => item.id)).toEqual(items.slice(2, 4).map((item) => item.id));
     });
   });
 });

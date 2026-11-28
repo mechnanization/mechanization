@@ -265,8 +265,10 @@ describeIfDb('«تقرير المتأخرات» and the batch sheet', () => {
 
   describe('the approved batches', () => {
     it('lists the approved batch, with its code, for roles that cannot list batches', async () => {
-      const { batches: listed } = await scoped(() => reports.report());
+      const { batches: listed, approvedBatchCount } = await scoped(() => reports.report());
       expect(listed.map((entry) => entry.id)).toEqual([batchId]);
+      // Counted apart from the list, which keeps the latest ARREARS_REPORT_BATCHES_MAX (PAG-06).
+      expect(approvedBatchCount).toBe(1);
       expect(listed[0]).toMatchObject({ code: batchId.replace(/-/g, '').slice(0, 8).toUpperCase(), lineCount: 6, citizenCount: 2 });
     });
   });

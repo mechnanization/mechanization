@@ -490,6 +490,35 @@ export interface ArrearsBatchReview {
   bills: { count: number; amount: number; citizens: number };
 }
 
+/**
+ * A page of `GET arrears/batches` and of `GET arrears/lines/unmatched`: the default and
+ * the most one request may ask for (audit PAG-06). Each default is the cut the list
+ * made before it was paged, so a screen that sends no page sees what it saw; the
+ * answer's `total` is how many there are, and the screen says «معروض N من أصل M»
+ * when that is more. Before, the 201st batch and the 1,001st line disappeared with
+ * nothing said, and a clerk working «للمطابقة» could not know lines were missing.
+ */
+export const ARREARS_BATCHES_PAGE_DEFAULT = 200;
+export const ARREARS_BATCHES_PAGE_MAX = 500;
+export const ARREARS_UNMATCHED_PAGE_DEFAULT = 1000;
+export const ARREARS_UNMATCHED_PAGE_MAX = 1000;
+/** The approved batches «تقرير المتأخرات» lists; `ArrearsReport.approvedBatchCount` counts them all. */
+export const ARREARS_REPORT_BATCHES_MAX = 200;
+
+/** `GET arrears/batches`, newest first. */
+export interface ArrearsBatchPage {
+  items: ArrearsBatchView[];
+  /** Every batch, not only this page's. */
+  total: number;
+}
+
+/** `GET arrears/lines/unmatched`, by year. */
+export interface ArrearsUnmatchedPage {
+  items: ArrearsUnmatchedLine[];
+  /** Every line waiting, not only this page's. */
+  total: number;
+}
+
 /** A «للمطابقة» line of an approved batch, waiting to be linked to a file (`GET arrears/lines/unmatched`). */
 export interface ArrearsUnmatchedLine {
   id: string;
@@ -607,8 +636,10 @@ export interface ArrearsReport {
   years: ArrearsReportYear[];
   coverage: ArrearsReportCoverage;
   collections: ArrearsReportCollection[];
-  /** The approved batches, newest first. */
+  /** The approved batches, newest first: the latest `ARREARS_REPORT_BATCHES_MAX`. */
   batches: ArrearsReportBatch[];
+  /** Every approved batch, so the report says when `batches` is not all of them (PAG-06). */
+  approvedBatchCount: number;
   /** The rows summed. */
   totals: Omit<ArrearsReportRow, 'year' | 'feeType'>;
 }

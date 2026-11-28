@@ -10,6 +10,8 @@ import {
   referenceLoginSchema,
   referenceOnlyLoginSchema,
   requestOtpSchema,
+  sendResetPasswordEmailSchema,
+  type SendResetPasswordEmail,
   staffLoginSchema,
   totpEnrolmentSchema,
   totpReauthSchema,
@@ -292,9 +294,9 @@ export class AuthController {
   @Post('staff/send-reset-password-email')
   async sendResetPasswordEmail(
     @CurrentUser() user: SessionClaims,
-    @Body() body?: { redirectTo?: string },
+    @Body(new ZodValidationPipe(sendResetPasswordEmailSchema)) body: SendResetPasswordEmail,
   ) {
-    return this.identity.sendStaffPasswordResetEmail(user.sub, body?.redirectTo);
+    return this.identity.sendStaffPasswordResetEmail(user.sub, body.redirectTo);
   }
 
   /**

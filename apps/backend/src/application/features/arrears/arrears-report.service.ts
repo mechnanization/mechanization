@@ -6,6 +6,7 @@ import type {
   ArrearsReport,
   ArrearsSheetDroppedLine,
 } from '@mechanization/shared-schemas';
+import { ARREARS_REPORT_BATCHES_MAX } from '@mechanization/shared-schemas';
 import { ConflictError } from '../../../domain/errors/domain-error';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
@@ -52,7 +53,7 @@ export class ArrearsReportService {
    * collected on old debts, apart from every other bill, by year (Beirut's calendar).
    */
   async report(): Promise<ArrearsReport> {
-    const [rows, years, coverage, collections, settings, controlTotals, approved] = await Promise.all([
+    const [rows, years, coverage, collections, settings, controlTotals, approved, approvedBatchCount] = await Promise.all([
       this.db.$queryRaw<RawReportRow[]>`
         SELECT l."year"::int AS "year",
                l."feeType" AS "feeType",
@@ -102,7 +103,7 @@ export class ArrearsReportService {
       this.db.arrearsBatch.findMany({
         where: { status: 'APPROVED' },
         orderBy: [{ approvedAt: 'desc' }, { id: 'asc' }],
-        take: 200,
+        take: ARREARS_REPORT_BATCHES_MAX,
         select: {
           id: true,
           approvedAt: true,
@@ -111,6 +112,8 @@ export class ArrearsReportService {
           _count: { select: { lines: true, citizens: true } },
         },
       }),
+      // Every approved batch: the list above is the latest ones, and the report says when it is not all (PAG-06).
+      this.db.arrearsBatch.count({ where: { status: 'APPROVED' } }),
     ]);
 
     return assembleArrearsReport({
@@ -129,6 +132,7 @@ export class ArrearsReportService {
         lineCount: batch._count.lines,
         citizenCount: batch._count.citizens,
       })),
+      approvedBatchCount,
     });
   }
 

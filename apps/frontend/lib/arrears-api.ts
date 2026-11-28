@@ -1,6 +1,7 @@
 import type {
   ArrearsBatchReview,
   ArrearsBatchSheet,
+  ArrearsBatchPage,
   ArrearsBatchView,
   ArrearsCutoffInput,
   ArrearsExportResult,
@@ -9,6 +10,7 @@ import type {
   ArrearsSettingsView,
   ArrearsSingleLineInput,
   ArrearsUnmatchedLine,
+  ArrearsUnmatchedPage,
   DiscardArrearsBatchInput,
   ExportArrearsTemplateInput,
   ImportArrearsInput,
@@ -49,9 +51,9 @@ export function importArrears(tenant: string, token: string, batchId: string, in
   });
 }
 
-/** The batches, newest first. */
+/** The batches, newest first: the server's default page, with `total` (PAG-06). */
 export function listArrearsBatches(tenant: string, token: string, signal?: AbortSignal) {
-  return apiFetch<{ items: ArrearsBatchView[] }>(tenant, '/arrears/batches', { token, signal });
+  return apiFetch<ArrearsBatchPage>(tenant, '/arrears/batches', { token, signal });
 }
 
 /** «إرسال للاعتماد»: the draft, with the hand-added total of the pages copied. */
@@ -92,7 +94,7 @@ export function discardArrearsBatch(tenant: string, token: string, batchId: stri
 }
 
 export function getUnmatchedArrearsLines(tenant: string, token: string, signal?: AbortSignal) {
-  return apiFetch<{ items: ArrearsUnmatchedLine[] }>(tenant, '/arrears/lines/unmatched', { token, signal });
+  return apiFetch<ArrearsUnmatchedPage>(tenant, '/arrears/lines/unmatched', { token, signal });
 }
 
 /** Links a «للمطابقة» line to a file; its bill is raised then. */

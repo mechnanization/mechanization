@@ -493,18 +493,17 @@ describeIfDb('LandlordLinkService', () => {
     const owner = await ownerWithFile(phone.stored);
     await within(() => links.confirm({ propertyEntryId: entryId, citizenId: owner.id, actor: actor() }));
 
-    const reporting = new (await import('../reporting/reporting.service')).ReportingService(
+    const profiles = new (await import('../reporting/citizen-profile.service')).CitizenProfileService(
       context,
-      new EventEmitter2(),
       { get: async () => null, set: async () => undefined } as never,
       { getOrThrow: () => 60 } as never,
     );
-    const profile = await within(() => reporting.getCitizenProfile(tenantId));
+    const profile = await within(() => profiles.getCitizenProfile(tenantId));
     const card = profile!.registrations[0]!.properties[0]!;
     expect(card.landlordName).toBe('ابراهيم علي نصرالله');
     expect(card.landlordNameAsTyped).toBe('ابو علي');
 
-    const ownerProfile = await within(() => reporting.getCitizenProfile(owner.id));
+    const ownerProfile = await within(() => profiles.getCitizenProfile(owner.id));
     expect(ownerProfile!.landlordOf).toEqual([
       expect.objectContaining({ propertyEntryId: entryId, tenant: expect.objectContaining({ id: tenantId }) }),
     ]);
