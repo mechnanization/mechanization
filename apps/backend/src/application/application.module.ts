@@ -26,6 +26,7 @@ import { UnitCorrectionService } from './features/corrections/unit-correction.se
 import { CasesService } from './features/cases/cases.service';
 import { CitizensService } from './features/citizens/citizens.service';
 import { CitizenDuplicatesService } from './features/citizens/citizen-duplicates.service';
+import { CitizenImportService } from './features/citizens/citizen-import.service';
 import { LandlordLinkService } from './features/citizens/landlord-link.service';
 import { LandlordUnlinkService } from './features/citizens/landlord-unlink.service';
 import { LandlordLinkQueueService } from './features/citizens/landlord-link-queue.service';
@@ -40,6 +41,7 @@ import { StaffPresenceService } from './features/identity/staff-presence.service
 import { StaffRefreshTokenService } from './features/identity/staff-refresh-token.service';
 import { RegistrationService } from './features/registration/registration.service';
 import { ReportingService } from './features/reporting/reporting.service';
+import { CitizenProfileService } from './features/reporting/citizen-profile.service';
 import { TenantService } from './features/tenant/tenant.service';
 import { FeesService } from './features/fees/fees.service';
 import { FeeNoticesService } from './features/fees/fee-notices.service';
@@ -101,9 +103,11 @@ import { RecordReviewService } from './features/quality/record-review.service';
     DocumentService,
     AuditService,
     ReportingService,
+    CitizenProfileService,
     CadastreImportService,
     CitizensService,
     CitizenDuplicatesService,
+    CitizenImportService,
     LandlordLinkService,
     LandlordUnlinkService,
     LandlordLinkQueueService,
@@ -170,9 +174,11 @@ import { RecordReviewService } from './features/quality/record-review.service';
     DocumentService,
     AuditService,
     ReportingService,
+    CitizenProfileService,
     CadastreImportService,
     CitizensService,
     CitizenDuplicatesService,
+    CitizenImportService,
     LandlordLinkService,
     LandlordUnlinkService,
     LandlordLinkQueueService,

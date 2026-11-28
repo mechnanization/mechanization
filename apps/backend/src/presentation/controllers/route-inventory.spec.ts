@@ -5,6 +5,7 @@ import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum';
 import { FeesController } from './fees.controller';
 import { DiscoveredRoute, discoverRoutes } from './route-discovery';
 import { UuidPipe } from '../pipes/uuid.pipe';
+import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 
 /*
   The route inventory: who can reach every route the API serves.
@@ -101,7 +102,8 @@ describe('the route inventory', () => {
 
   it('has no route that deletes a citizen — a citizen is archived, never deleted', () => {
     const deletes = all.filter(
-      (route) => route.name.startsWith('CitizenController.') && route.method === RequestMethod.DELETE,
+      // By path, not by controller: the owner-link routes are their own controller since GOD-13.
+      (route) => route.controllerPath === 't/:tenantSlug/citizens' && route.method === RequestMethod.DELETE,
     );
     // Unlinking a landlord ends a link; it touches no citizen row.
     expect(deletes.map((route) => route.path)).toEqual(['landlord-links/:propertyEntryId']);
@@ -654,5 +656,46 @@ describe('the path parameters of every route (S11)', () => {
     );
     await expect(pipe.transform('not-an-id', { type: 'param' })).rejects.toThrow();
     await expect(new UuidPipe({ optional: true }).transform(undefined as never, { type: 'query' })).resolves.toBeUndefined();
+  });
+});
+
+/*
+  Every body any route reads goes through a `ZodValidationPipe` with a shared
+  schema (non-negotiable 6; audit SEC-03): read raw — `@Body()` or
+  `@Body('field')` — a body that is not the shape reaches a service, or the
+  database, as whatever was sent, and a malformed one is a 500 and a Sentry
+  event rather than the 400 it is.
+*/
+describe('the bodies of every route (SEC-03)', () => {
+  type RouteArg = { data?: unknown; pipes?: unknown[] };
+  const all = discoverRoutes();
+  const bodies = all.flatMap((route) => {
+    const method = route.name.split('.')[1]!;
+    const args = Object.entries(
+      (Reflect.getMetadata(ROUTE_ARGS_METADATA, route.controller, method) ?? {}) as Record<string, RouteArg>,
+    );
+    return args
+      .filter(([key]) => key.startsWith(`${RouteParamtypes.BODY}:`))
+      .map(([, arg]) => ({ route: route.name, field: arg.data, pipes: arg.pipes ?? [] }));
+  });
+
+  it('finds them, so the check below is about something', () => {
+    expect(bodies.length).toBeGreaterThan(100);
+    expect(bodies.map((body) => body.route)).toEqual(
+      expect.arrayContaining([
+        'CitizenLandlordLinksController.confirmLandlordLink',
+        'CitizenLandlordLinksController.dismissLandlordLink',
+        'CitizenLandlordLinksController.restoreLandlordLink',
+        'AuthController.sendResetPasswordEmail',
+      ]),
+    );
+  });
+
+  it('validates every body whole, through a ZodValidationPipe', () => {
+    expect(
+      bodies
+        .filter((body) => body.field !== undefined || !body.pipes.some((pipe) => pipe instanceof ZodValidationPipe))
+        .map((body) => (body.field === undefined ? body.route : `${body.route}(${String(body.field)})`)),
+    ).toEqual([]);
   });
 });

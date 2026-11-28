@@ -8,7 +8,7 @@ import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migra
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { AuditService } from '../audit/audit.service';
-import { ReportingService } from '../reporting/reporting.service';
+import { CitizenProfileService } from '../reporting/citizen-profile.service';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { CitizenRequestsService } from '../citizen-requests/citizen-requests.service';
 import { TreasuryService } from '../treasury/treasury.service';
@@ -42,7 +42,7 @@ describeIfDb('«شطب»: writing off what is left on a bill', () => {
   let feeNotices: FeeNoticesService;
   let payments: PaymentLedgerService;
   let settlements: PaymentSettlementService;
-  let reporting: ReportingService;
+  let profiles: CitizenProfileService;
   let parcelDues: ParcelDuesService;
   let requests: CitizenRequestsService;
 
@@ -94,7 +94,7 @@ describeIfDb('«شطب»: writing off what is left on a bill', () => {
   const writeOff = (paymentId: string, input: Partial<typeof DECISION> = {}) =>
     scoped(() => billLifecycle.writeOffBill(paymentId, { ...DECISION, ...input }, MANAGER()));
 
-  const onProfile = async () => (await scoped(() => reporting.getCitizenProfile(citizenId)))!;
+  const onProfile = async () => (await scoped(() => profiles.getCitizenProfile(citizenId)))!;
 
   beforeAll(async () => {
     ddl = new Client({ connectionString: TEST_DATABASE_URL });
@@ -115,7 +115,7 @@ describeIfDb('«شطب»: writing off what is left on a bill', () => {
     } as never;
     ({ fees, billLifecycle, feeNotices } = feeServices(context, { emit: jest.fn() } as unknown as EventEmitter2, {} as never, cache, payments, auditService));
     settlements = new PaymentSettlementService(context, new EventEmitter2(), payments, auditService, ledger);
-    reporting = new ReportingService(context, new EventEmitter2(), cache, { getOrThrow: () => 60 } as never);
+    profiles = new CitizenProfileService(context, cache, { getOrThrow: () => 60 } as never);
     parcelDues = new ParcelDuesService(context);
     requests = new CitizenRequestsService(
       context,

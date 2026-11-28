@@ -22,6 +22,7 @@ import { TransfersController } from './controllers/transfers.controller';
 import { TreasuryClosingController } from './controllers/treasury-closing.controller';
 import { CasesController } from './controllers/cases.controller';
 import { CitizenController } from './controllers/citizen.controller';
+import { CitizenLandlordLinksController } from './controllers/citizen-landlord-links.controller';
 import { DashboardController } from './controllers/dashboard.controller';
 import { DocumentController } from './controllers/document.controller';
 import { HealthController } from './controllers/health.controller';
@@ -52,6 +53,8 @@ import { SingleQueryValuePipe } from './pipes/single-query-value.pipe';
     DocumentController,
     AuditController,
     DashboardController,
+    // Before `CitizenController`: both are mounted on `citizens`, and its `GET :id` would read `landlord-links` as an id.
+    CitizenLandlordLinksController,
     CitizenController,
     CadastreController,
     FeesController,

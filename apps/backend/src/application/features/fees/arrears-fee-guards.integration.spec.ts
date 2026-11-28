@@ -9,6 +9,7 @@ import { PrismaAuditRepository } from '../../../infrastructure/repositories/audi
 import { AuditService } from '../audit/audit.service';
 import { CitizensService } from '../citizens/citizens.service';
 import { ReportingService } from '../reporting/reporting.service';
+import { CitizenProfileService } from '../reporting/citizen-profile.service';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { FeesService } from './fees.service';
 import { PaymentLedgerService } from './payment-ledger.service';
@@ -47,6 +48,7 @@ describeIfDb('old debts and the fee system', () => {
   let feeNotices: FeeNoticesService;
   let recurringBilling: RecurringBillingService;
   let reporting: ReportingService;
+  let profiles: CitizenProfileService;
   let citizens: CitizensService;
 
   const ids = { accountant: randomUUID(), owes: randomUUID(), other: randomUUID(), third: randomUUID() };
@@ -89,6 +91,7 @@ describeIfDb('old debts and the fee system', () => {
     const payments = new PaymentLedgerService(context, audit, new TreasuryLedgerService(context));
     ({ fees, feeNotices, recurringBilling } = feeServices(context, { emit: jest.fn() } as unknown as EventEmitter2, {} as never, cache, payments, audit));
     reporting = new ReportingService(context, new EventEmitter2(), cache, { getOrThrow: () => 60 } as never);
+    profiles = new CitizenProfileService(context, cache, { getOrThrow: () => 60 } as never);
     citizens = new CitizensService(context, {} as never, {} as never, {} as never, {} as never, {} as never, new EventEmitter2(), audit, {} as never, {} as never, new CitizenDuplicatesService(context));
 
     await db.user.createMany({
@@ -215,7 +218,7 @@ describeIfDb('old debts and the fee system', () => {
     });
 
     it('the citizen’s file: owed, overdue and billed', async () => {
-      const profile = (await within(() => reporting.getCitizenProfile(ids.owes)))!;
+      const profile = (await within(() => profiles.getCitizenProfile(ids.owes)))!;
       expect(profile.fees).toMatchObject({ outstandingTotal: 150_000, overdueTotal: 100_000, overdueCount: 1, feesTotal: 150_000 });
       const arr = profile.payments.find((payment) => payment.id === overdueId)!;
       expect(arr).toMatchObject({ paymentStatus: 'OVERDUE', remaining: 100_000 });

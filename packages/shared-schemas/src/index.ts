@@ -38,6 +38,7 @@ export * from './payout-policy';
 export * from './exchange-policy';
 export * from './inspector-earnings';
 export * from './citizen-merge.schema';
+export * from './landlord-link.schema';
 export * from './unit-status-rule';
 export * from './treasury.schema';
 export * from './expense.schema';

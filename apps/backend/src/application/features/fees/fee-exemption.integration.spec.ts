@@ -10,7 +10,7 @@ import { AuditService } from '../audit/audit.service';
 import { DamageService } from '../buildings/damage.service';
 import { FeeExemptionService } from '../buildings/fee-exemption.service';
 import { DataQualityService } from '../quality/data-quality.service';
-import { ReportingService } from '../reporting/reporting.service';
+import { CitizenProfileService } from '../reporting/citizen-profile.service';
 import { assessCitizen, FeesService } from './fees.service';
 import { municipalToday } from '@mechanization/shared-schemas';
 import { feeServices } from './fee-services.testing';
@@ -316,13 +316,12 @@ describeIfDb('units charged nothing', () => {
     await within(() => exemptions.set(flat.id, { reason: 'OTHER', note: 'سكن الناطور البلدي' }, admin));
     await within(() => exemptions.set(parcel.shop.id, { reason: 'PUBLIC_FACILITY' }, admin));
 
-    const reporting = new ReportingService(
+    const profiles = new CitizenProfileService(
       context,
-      new EventEmitter2(),
       { get: async () => null, set: async () => undefined } as never,
       { getOrThrow: () => 60 } as never,
     );
-    const profile = await within(() => reporting.getCitizenProfile(citizenId));
+    const profile = await within(() => profiles.getCitizenProfile(citizenId));
     const cards = new Map(profile!.registrations[0]!.properties.map((card) => [card.id, card]));
 
     expect(cards.get(houseCard.id)!.heldUnits).toEqual([
@@ -401,13 +400,12 @@ describeIfDb('units charged nothing', () => {
     });
     expect(billed).toMatchObject({ kind: 'assessed', exemptUnitIds: [parcel.shop.id] });
 
-    const reporting = new ReportingService(
+    const profiles = new CitizenProfileService(
       context,
-      new EventEmitter2(),
       { get: async () => null, set: async () => undefined } as never,
       { getOrThrow: () => 60 } as never,
     );
-    const profile = await within(() => reporting.getCitizenProfile(citizenId));
+    const profile = await within(() => profiles.getCitizenProfile(citizenId));
     const cards = new Map(profile!.registrations.flatMap((registration) => registration.properties).map((entry) => [entry.id, entry]));
     expect(cards.get(card.id)!.heldUnits).toEqual([
       expect.objectContaining({ unitId: parcel.shop.id, feeExemption: 'PUBLIC_FACILITY' }),

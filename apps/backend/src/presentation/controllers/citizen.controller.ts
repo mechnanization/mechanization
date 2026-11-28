@@ -1,8 +1,6 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import {
   EVERY_STAFF_ROLE,
-  LANDLORD_LINK_ANSWER_ROLES,
-  LANDLORD_SUMMARY_READ_ROLES,
   REGISTER_WRITE_ROLES,
   adminCreateCitizenSubmissionSchema,
   adminUpdateCitizenSubmissionSchema,
@@ -31,11 +29,10 @@ import type {
 } from '@mechanization/shared-schemas';
 import { CitizenMergeService } from '../../application/features/citizens/citizen-merge.service';
 import { CitizensService } from '../../application/features/citizens/citizens.service';
-import { LandlordLinkService } from '../../application/features/citizens/landlord-link.service';
 import { OwnershipService } from '../../application/features/citizens/ownership.service';
 import { AuditService } from '../../application/features/audit/audit.service';
 import { TenancyService } from '../../application/features/citizens/tenancy.service';
-import { ReportingService, type CitizenProfileUnit } from '../../application/features/reporting/reporting.service';
+import { CitizenProfileService, type CitizenProfileUnit } from '../../application/features/reporting/citizen-profile.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { NotFoundError } from '../../application/common/exceptions';
 import { citizenArrears } from '../../application/features/fees/bill-arrears';
@@ -47,9 +44,8 @@ import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { UuidPipe } from '../pipes/uuid.pipe';
 import { queryLimit, queryOffset } from './query-params';
-import { LandlordLinkQueueService } from '../../application/features/citizens/landlord-link-queue.service';
-import { LandlordUnlinkService } from '../../application/features/citizens/landlord-unlink.service';
 import { CitizenDuplicatesService } from '../../application/features/citizens/citizen-duplicates.service';
+import { CitizenImportService } from '../../application/features/citizens/citizen-import.service';
 
 /**
  * Shows only the tail of an identifier — `•••567`.
@@ -90,15 +86,13 @@ function mask(value: string | null | undefined): string | null {
 export class CitizenController {
   constructor(
     private readonly citizens: CitizensService,
-    private readonly reporting: ReportingService,
-    private readonly landlordLinkService: LandlordLinkService,
+    private readonly profiles: CitizenProfileService,
     private readonly tenancy: TenancyService,
     private readonly ownership: OwnershipService,
     private readonly audit: AuditService,
     private readonly merges: CitizenMergeService,
-    private readonly linkQueue: LandlordLinkQueueService,
-    private readonly unlinks: LandlordUnlinkService,
     private readonly duplicates: CitizenDuplicatesService,
+    private readonly imports: CitizenImportService,
   ) {}
 
   /**
@@ -185,7 +179,7 @@ export class CitizenController {
   @SelfService("a citizen's own summary; refuses staff")
   @Get('me/summary')
   async mySummary(@CurrentUser() user: SessionClaims) {
-    const citizen = await this.reporting.getCitizenProfile(user.sub);
+    const citizen = await this.profiles.getCitizenProfile(user.sub);
     if (!citizen) throw new NotFoundError('Citizen', user.sub);
 
     /*
@@ -311,86 +305,6 @@ export class CitizenController {
     };
   }
 
-  // ──────────────────  Owner links (روابط المالكين)  ──────────────────
-  //
-  // Declared above `:id` for the reason `parcel` is: Nest matches in
-  // declaration order, and `landlord-links` would otherwise be read as a
-  // citizen id.
-  //
-  // Everything here is about identifying the owner a مستأجر named, among the
-  // register's own citizens — see `LandlordLinkService` for why the match is
-  // computed rather than stored, and why nothing links itself.
-
-  /**
-   * The queue: every unresolved claim whose number matches a registered
-   * citizen.
-   *
-   * Readable by the roles that read the register, because it is a view of the
-   * register. Acting on one is a narrower list — see `confirmLandlordLink`.
-   */
-  @Roles(...EVERY_STAFF_ROLE)
-  @Get('landlord-links')
-  landlordLinks(@Query('limit') limit?: string, @Query('offset') offset?: string) {
-    /*
-      Paged, because the match is: one statement finds only the claims that
-      resolve to somebody, and the page is hydrated from those. The whole queue
-      in one response was the read this screen used to make on every visit.
-    */
-    return this.linkQueue.proposals({
-      limit: queryLimit(limit, 20, 100),
-      offset: queryOffset(offset),
-    });
-  }
-
-  /**
-   * How much ownership the register knows about and does not bill.
-   *
-   * Split out from the queue rather than folded into it because it answers a
-   * different person's question: the queue is a clerk's afternoon, this is the
-   * number somebody takes to the council. See `unbilledOwnedUnits`.
-   */
-  @Roles(...LANDLORD_SUMMARY_READ_ROLES)
-  @Get('landlord-links/summary')
-  landlordLinkSummary() {
-    return this.linkQueue.unbilledOwnedUnits();
-  }
-
-  /**
-   * The form's inline lookup: who is registered on this number?
-   *
-   * Every active citizen on it. A shared household line is where the officer
-   * standing with the tenant is best placed to say which person was meant, so
-   * the form lists them to choose from rather than falling silent. `candidate`
-   * is kept for a client from before the list existed: the one person, or null
-   * where there are several.
-   */
-  @Roles(...REGISTER_WRITE_ROLES)
-  @Get('landlord-links/candidate')
-  async landlordCandidate(@Query('phone') phone?: string) {
-    if (!phone?.trim()) return { candidate: null, candidates: [] };
-    const candidates = await this.linkQueue.candidatesFor(phone);
-    return { candidate: candidates.length === 1 ? candidates[0] : null, candidates };
-  }
-
-  /**
-   * «فحص الرابط» — one open claim, as the queue row it was opened from: the
-   * same roles as the queue, which it is a view of. 404 when the claim is no
-   * longer open (linked, dismissed, ended, or naming nobody registered).
-   *
-   * Declared after the static `landlord-links/*` reads so neither is read as
-   * an id; a non-UUID is answered as not found rather than a database error.
-   */
-  @Roles(...EVERY_STAFF_ROLE)
-  @Get('landlord-links/:propertyEntryId')
-  async landlordLink(@Param('propertyEntryId', new UuidPipe()) propertyEntryId: string) {
-    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const proposal = uuid.test(propertyEntryId)
-      ? await this.linkQueue.proposal(propertyEntryId)
-      : null;
-    if (!proposal) throw new NotFoundError('LandlordLink', propertyEntryId);
-    return proposal;
-  }
-
   /**
    * What ending this tenancy would touch — which flats, whether anybody else
    * still lives in each, who owns them — so «إنهاء الإيجار» asks the right
@@ -468,101 +382,6 @@ export class CitizenController {
   }
 
   /**
-   * What «إلغاء الربط» would do, read when its confirmation opens — so the
-   * clerk is told which flats leave the owner's file, and whether bills have
-   * been raised since, before deciding.
-   */
-  @Roles(...LANDLORD_LINK_ANSWER_ROLES)
-  @Get('landlord-links/:propertyEntryId/unlink-preview')
-  landlordUnlinkPreview(@Param('propertyEntryId', new UuidPipe()) propertyEntryId: string) {
-    return this.unlinks.unlinkPreview(propertyEntryId);
-  }
-
-  /**
-   * «نعم، هذا هو المالك» — the only writer of `landlordCitizenId`.
-   *
-   * Gated to the roles accountable for the register rather than to every
-   * reader, because this decides money: a confirmed link records ownership,
-   * shows the owner on the matrix, and can put units on a bill. AUDITOR sees
-   * the queue and does not answer it, which is the read-only remit its name
-   * implies.
-   *
-   * The service re-checks that the number actually matches the citizen before
-   * writing, so a request naming an arbitrary pair is refused rather than
-   * recorded as a confirmed match.
-   */
-  @Roles(...LANDLORD_LINK_ANSWER_ROLES)
-  @Post('landlord-links/:propertyEntryId/confirm')
-  confirmLandlordLink(
-    @Param('propertyEntryId', new UuidPipe()) propertyEntryId: string,
-    @Body('citizenId') citizenId: string,
-    @CurrentActor() actor: StaffActor,
-  ) {
-    return this.landlordLinkService.confirm({
-      propertyEntryId,
-      citizenId,
-      actor,
-    });
-  }
-
-  /**
-   * «لا أحد منهم» — these citizens are not this card's owner.
-   *
-   * Names the citizens the clerk was shown, so somebody registering on the
-   * number later is still offered. See `landlordLinkDismissedIds`.
-   */
-  @Roles(...LANDLORD_LINK_ANSWER_ROLES)
-  @Post('landlord-links/:propertyEntryId/dismiss')
-  dismissLandlordLink(
-    @Param('propertyEntryId', new UuidPipe()) propertyEntryId: string,
-    @Body('candidateIds') candidateIds: unknown,
-    @CurrentActor() actor: StaffActor,
-  ) {
-    return this.landlordLinkService.dismiss({
-      propertyEntryId,
-      candidateIds: Array.isArray(candidateIds)
-        ? candidateIds.filter((id): id is string => typeof id === 'string')
-        : [],
-      actor,
-    });
-  }
-
-  /** The «تراجع» on a dismissal — offers those citizens on the card again. */
-  @Roles(...LANDLORD_LINK_ANSWER_ROLES)
-  @Post('landlord-links/:propertyEntryId/restore')
-  restoreLandlordLink(
-    @Param('propertyEntryId', new UuidPipe()) propertyEntryId: string,
-    @Body('candidateIds') candidateIds: unknown,
-    @CurrentActor() actor: StaffActor,
-  ) {
-    return this.landlordLinkService.undismiss({
-      propertyEntryId,
-      candidateIds: Array.isArray(candidateIds)
-        ? candidateIds.filter((id): id is string => typeof id === 'string')
-        : [],
-      actor,
-    });
-  }
-
-  /**
-   * Undoes a confirmation: the claim goes back to the queue, and what the link
-   * wrote into the owner's records — occupancies, unit rows, a card it created
-   * — is reverted, exactly that and only while unedited. See
-   * `LandlordUnlinkService.unlink` for what is kept and why.
-   */
-  @Roles(...LANDLORD_LINK_ANSWER_ROLES)
-  @Delete('landlord-links/:propertyEntryId')
-  unlinkLandlord(
-    @Param('propertyEntryId', new UuidPipe()) propertyEntryId: string,
-    @CurrentActor() actor: StaffActor,
-  ) {
-    return this.unlinks.unlink({
-      propertyEntryId,
-      actor,
-    });
-  }
-
-  /**
    * Who is registered on one رقم العقار.
    *
    * Sits above `:id` because Nest matches in declaration order and `parcel`
@@ -584,7 +403,7 @@ export class CitizenController {
   @Roles(...EVERY_STAFF_ROLE)
   @Get(':id')
   async getById(@Param('id', new UuidPipe()) id: string) {
-    const citizen = await this.reporting.getCitizenProfile(id);
+    const citizen = await this.profiles.getCitizenProfile(id);
     if (!citizen) throw new NotFoundError('Citizen', id);
     return citizen;
   }
@@ -741,7 +560,7 @@ export class CitizenController {
     @Body(new ZodValidationPipe(citizenImportSchema)) payload: CitizenImportRequest,
     @CurrentActor() actor: StaffActor,
   ) {
-    return this.citizens.importMany({
+    return this.imports.importMany({
       tenantSlug,
       rows: payload.rows,
       startRow: payload.startRow,
