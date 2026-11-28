@@ -82,6 +82,7 @@ export class PrismaStaffRefreshTokenRepository implements StaffRefreshTokenRepos
     child: NewStaffRefreshToken,
     at: Date,
   ): Promise<StaffRefreshTokenRow | null> {
+    // Its own transaction, not `runInTenantTransaction`: see the class comment (ARCH-05).
     return this.db.$transaction(async (tx) => {
       const { count } = await tx.staffRefreshToken.updateMany({
         where: {
@@ -109,6 +110,7 @@ export class PrismaStaffRefreshTokenRepository implements StaffRefreshTokenRepos
     maxRetries: number,
   ): Promise<RetryResult> {
     try {
+      // Its own transaction, not `runInTenantTransaction`: see the class comment (ARCH-05).
       return await this.db.$transaction(async (tx) => {
         // (1) Claims one retry and takes the parent's row lock, which every
         // other retry or rotation of this parent now queues behind.

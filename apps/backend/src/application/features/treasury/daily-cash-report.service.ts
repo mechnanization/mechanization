@@ -10,6 +10,7 @@ import type {
 } from '@mechanization/shared-schemas';
 import { municipalDayStart } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
+import { readInTenantSnapshot } from '../../../infrastructure/context/tenant-transaction';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { addDays, isCountedWallet, summariseDay } from './day-closing.plan';
 import { countView } from './daily-count.service';
@@ -60,8 +61,10 @@ export class DailyCashReportService {
       without the voucher it closed on. An open day's report is a draft, but a
       draft that disagrees with itself is not one anybody can check.
     */
-    const { accounts, openings, entries, countRows, day, timeline, viewer } = await this.db.$transaction(
-      async (tx) => {
+    const { accounts, openings, entries, countRows, day, timeline, viewer } = await readInTenantSnapshot(
+      this.tenantContext,
+      async () => {
+        const tx = this.db as Prisma.TransactionClient;
         // Custody included. A wallet belongs to the day if it existed by its end or held money before
         // it: a collector's custody is created by his first round, which may be entered days late.
         const accounts = await tx.treasuryAccount.findMany({
@@ -105,7 +108,6 @@ export class DailyCashReportService {
         });
         return { accounts, openings, entries, countRows, day, timeline, viewer };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
     );
 
     const moved = summariseDay(

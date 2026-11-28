@@ -10,6 +10,7 @@ import {
   type TreasuryMovementsResult,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
+import { readInTenantSnapshot } from '../../../infrastructure/context/tenant-transaction';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { likePattern } from '../../common/search-terms';
@@ -122,8 +123,10 @@ export class TreasuryMovementsService {
     const offset = (pageNumber - 1) * pageSize;
 
     // One snapshot for every read below (see the class comment); one after another, on the one connection.
-    const { page, sums, days, incomeViews, expenseViews, daySums } = await this.db.$transaction(
-      async (tx) => {
+    const { page, sums, days, incomeViews, expenseViews, daySums } = await readInTenantSnapshot(
+      this.tenantContext,
+      async () => {
+        const tx = this.db as Prisma.TransactionClient;
         const page = await tx.$queryRaw<PageRow[]>`
           SELECT m."direction", m."id", m."day"
             FROM (${this.vouchers(filters, { excludeVoid: !filters.includeVoid, top: offset + pageSize })}) m
@@ -155,7 +158,6 @@ export class TreasuryMovementsService {
         const daySums = await this.dayTotals(tx, filters, days);
         return { page, sums, days, incomeViews, expenseViews, daySums };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
     );
 
     return {

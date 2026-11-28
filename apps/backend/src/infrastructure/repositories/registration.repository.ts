@@ -145,6 +145,8 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
     };
 
     try {
+      // Its own transaction, not `runInTenantTransaction`: the race recovery in the `catch` reads the
+      // winning row after this one rolled back, which inside a caller's transaction would fail (ARCH-05).
       return await this.db.$transaction(async (tx) => {
         /*
           No «منزل» on a structure of several units (decision D28) — see

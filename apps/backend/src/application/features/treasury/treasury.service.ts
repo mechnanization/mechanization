@@ -14,7 +14,7 @@ import type {
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
-import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { readInTenantSnapshot, runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService } from '../audit/audit.service';
@@ -153,8 +153,10 @@ export class TreasuryService {
       from. Read separately, a movement committed between them was in the sum but
       not on the page, and every running balance on the statement was off by it.
     */
-    const { rows, total, atEnd } = await this.db.$transaction(
-      async (tx) => {
+    const { rows, total, atEnd } = await readInTenantSnapshot(
+      this.tenantContext,
+      async () => {
+        const tx = this.db as Prisma.TransactionClient;
         const rows = await tx.treasuryEntry.findMany({
           where: {
             accountId,
@@ -208,7 +210,6 @@ export class TreasuryService {
           : (total._sum.amount ?? new Prisma.Decimal(0));
         return { rows, total, atEnd };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
     );
 
     const truncated = rows.length > limit;

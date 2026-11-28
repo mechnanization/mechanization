@@ -494,6 +494,9 @@ export class BackupService {
      * reconcile. The timeout is generous because this is the one operation on
      * this system where taking too long is preferable to giving up midway; the
      * transaction still rolls back cleanly if it is exceeded.
+     *
+     * Still a bare `$transaction`: whether this service is rebuilt or deleted
+     * is decision U-11 (audit DEAD-10), and ARCH-05 leaves it to that.
      */
     await this.db.$transaction(
       async (tx) => {

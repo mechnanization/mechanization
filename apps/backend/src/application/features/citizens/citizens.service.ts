@@ -48,7 +48,7 @@ import {
   type RevertReport,
 } from './landlord-link.service';
 import { AuditService, type CitizenChange } from '../audit/audit.service';
-import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { readInTenantSnapshot, runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import {
   identityDocumentOf,
   RegistrationService,
@@ -463,13 +463,15 @@ export class CitizensService {
       ticked «المتأخرات» saw a municipality that owed nothing.
 
       An aggregate query with no GROUP BY always returns exactly one row, so
-      the totals no longer depend on the page having content. `$transaction`
-      rather than two awaits, for the same reason `listAllPayments` uses it:
-      both statements read the same snapshot, so the count above the table
-      cannot disagree with the rows in it.
+      the totals no longer depend on the page having content. One
+      `readInTenantSnapshot` rather than three awaits: Repeatable Read gives
+      the three statements the same snapshot, so the count above the table
+      cannot disagree with the rows in it. (The array-form `$transaction` this
+      was ran at Read Committed, where each statement takes its own snapshot,
+      and did not give that; audit ARCH-04, ARCH-06.)
     */
     const [rows, [aggregate], [household]] = await withConnectionRetry(() =>
-      this.db.$transaction([
+      readInTenantSnapshot(this.tenantContext, () => Promise.all([
         this.db.$queryRaw<CitizenListRow[]>`
         SELECT
           u.id,
@@ -629,7 +631,7 @@ export class CitizensService {
         FROM ${this.S}users u
         WHERE u.kind = 'CITIZEN' AND u.residence::text = 'RESIDENT' AND u."isActive"
       `,
-      ]),
+      ])),
     );
 
     return {
@@ -740,7 +742,7 @@ export class CitizensService {
 
     // One snapshot for the page and its count, for the reason `list` gives.
     const [rows, [count]] = await withConnectionRetry(() =>
-      this.db.$transaction([
+      readInTenantSnapshot(this.tenantContext, () => Promise.all([
         this.db.$queryRaw<ReviewQueueRow[]>`
           SELECT u.id, u."firstName", u."middleName", u."lastName", u."motherName",
                  u."referenceNumber", u.phone, u."hasNoPhone",
@@ -754,7 +756,7 @@ export class CitizensService {
           LIMIT ${limit} OFFSET ${offset}
         `,
         this.db.$queryRaw<{ total: number }[]>`SELECT count(*)::int AS total ${queued}`,
-      ]),
+      ])),
     );
 
     return {
@@ -1894,7 +1896,8 @@ export class CitizensService {
     // Returned from the transaction rather than re-derived after it: the branch
     // below creates a registration where none existed, so "this citizen's
     // newest registration" is not necessarily the row this save just wrote to.
-    const registrationId = await this.db.$transaction(async (tx) => {
+    const registrationId = await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
       await tx.user
         .update({
           where: { id: citizen.id },

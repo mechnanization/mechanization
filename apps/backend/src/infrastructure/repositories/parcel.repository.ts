@@ -6,6 +6,7 @@ import {
   parcelNumberKey,
 } from '../../domain/interfaces/parcel-repository.interface';
 import { TenantContextService } from '../context/tenant-context.service';
+import { runInTenantTransaction } from '../context/tenant-transaction';
 import { tenantSchemaPrefix, tenantSchemaRef } from '../prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../prisma/with-connection-retry';
 
@@ -124,10 +125,11 @@ export class PrismaParcelRepository implements ParcelRepository {
       boundary?: unknown;
     }[],
   ): Promise<void> {
-    await this.db.$transaction([
-      this.db.parcel.deleteMany({}),
-      this.db.parcel.createMany({ data: parcels as never }),
-    ]);
+    // The old map goes only if the new one is written.
+    await runInTenantTransaction(this.tenantContext, async () => {
+      await this.db.parcel.deleteMany({});
+      await this.db.parcel.createMany({ data: parcels as never });
+    });
   }
 }
 

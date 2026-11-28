@@ -47,7 +47,7 @@ import {
   type BillableUnit,
 } from '../../../domain/entities/billable-unit';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
-import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { readInTenantSnapshot, runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { unitsUnderReview } from '../buildings/unit-status';
@@ -3124,17 +3124,13 @@ export class FeesService {
     const where = { ...whereWithoutStatus, ...paymentStatusWhere(filter.status, now) };
 
     /**
-     * The page, the count and the totals in one transaction, on one connection.
-     *
-     * Not one snapshot: the transaction runs at Read Committed, so each
-     * statement reads the rows committed when it starts, and a payment settled
-     * between two of them can still put the total a row out from the page
-     * beside it. A Repeatable Read helper for reads like this one is audit
-     * ARCH-06. Through `runInTenantTransaction` (audit ARCH-01), as every
-     * transaction in this service.
+     * The page, the count and the totals against one snapshot
+     * (`readInTenantSnapshot`, audit ARCH-06). At Read Committed each statement
+     * read the rows committed when it started, and a payment settled between
+     * two of them put the total a row out from the page beside it.
      */
     const [rows, total, collected, byMethod, awaiting] = await withConnectionRetry(() =>
-      runInTenantTransaction(this.tenantContext, async () => [
+      readInTenantSnapshot(this.tenantContext, async () => [
         await this.db.citizenPayment.findMany({
           where: scoped(where),
           /**
