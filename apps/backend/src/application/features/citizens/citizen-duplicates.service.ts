@@ -12,7 +12,7 @@ import {
   type DuplicateCandidate,
   type DuplicateReviewFindings,
 } from './possible-duplicates';
-import { normalizeSearchText } from '../../common/search-terms';
+import { normalizeSearchText } from '../../../domain/value-objects/search-terms';
 import { APP_CONFIG } from '../../common/app.config';
 
 /**

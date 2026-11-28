@@ -33,7 +33,6 @@ import { SmtpEmailSender } from './email/smtp-email.sender';
 import { S3StorageService } from './aws/s3-storage.service';
 import { RedisCacheService } from './cache/redis-cache.service';
 import { RedisThrottlerStorage } from './cache/redis-throttler-storage';
-import { CadastreAssetsService } from './cadastre/cadastre-assets.service';
 import { TenantContextService } from './context/tenant-context.service';
 import { TenantRunner } from './context/tenant-runner';
 import { RegistryPrismaService } from './prisma/registry-prisma.service';
@@ -68,7 +67,6 @@ import { SmsProviderService } from './sms/sms-provider.service';
     TenantPrismaFactory,
     RedisCacheService,
     RedisThrottlerStorage,
-    CadastreAssetsService,
 
     { provide: TENANT_REPOSITORY, useClass: PrismaTenantRepository },
     { provide: USER_REPOSITORY, useClass: PrismaUserRepository },
@@ -113,7 +111,6 @@ import { SmsProviderService } from './sms/sms-provider.service';
     TenantPrismaFactory,
     RedisCacheService,
     RedisThrottlerStorage,
-    CadastreAssetsService,
     TENANT_REPOSITORY,
     USER_REPOSITORY,
     REGISTRATION_REPOSITORY,

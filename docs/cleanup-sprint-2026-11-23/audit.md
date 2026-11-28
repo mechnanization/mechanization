@@ -782,6 +782,11 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Problem:** Tracked.
 - **Acceptance criteria / Verification:** grep → 0; citizens suites.
 - **Depends on:** none
+- **Done 2026-11-28:** `update` on `runInTenantTransaction` (`const tx = this.db`, as ARCH-03 did), so the
+  services it calls inside (`LandlordUnlinkService.revertLink`, the audit's `recordChangeInTransaction`) write through it
+  and a caller's transaction is joined. `list` and `reviewQueue` were array-form `$transaction([...])` *reads*, whose
+  comments claimed one snapshot; at Read Committed each statement takes its own, so they moved to ARCH-06's
+  `readInTenantSnapshot` and the comment now says why. `grep -n ".$transaction(" citizens.service.ts` → 0.
 
 ## [ARCH-05] Move the repositories' and BackupService's bare transactions
 - **Priority:** P3 · **Assignee:** Hashem · **Estimate:** S · **Category:** Architecture
@@ -789,6 +794,13 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Acceptance criteria:** converted, or each kept with a one-line reason (the refresh-token rotation may need its own isolation).
 - **Depends on:** DEAD-10 for `BackupService`
 - **Verification:** grep; specs.
+- **Done 2026-11-28:** `PrismaDocumentRepository.saveMany` and `PrismaParcelRepository.replaceAll` on
+  `runInTenantTransaction` (sequential creates, then delete-and-insert). Kept, each with a one-line reason at the call:
+  `PrismaRegistrationRepository.submit` (its `clientSubmissionId` race recovery reads the winning row after its own
+  transaction rolled back; inside a caller's, that read would hit an aborted transaction) and
+  `PrismaStaffRefreshTokenRepository.rotate` / `retry` (the class comment's reason). `BackupService` waits on DEAD-10, its
+  comment says so. The two converted calls now run under `TENANT_TRANSACTION_DEFAULTS` (15 s / 60 s); the array form had
+  no interactive timeout, so a parcel import over 60 s would now roll back (none has come near).
 
 ## [ARCH-06] Add a snapshot-read helper for the treasury's Repeatable Read reads
 - **Priority:** P3 · **Assignee:** Hashem · **Estimate:** S · **Category:** Architecture
@@ -797,6 +809,15 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Acceptance criteria:** `readInTenantSnapshot(tenantContext, fn)` in `infrastructure/context`; the three use it; the rule in apps/backend/CLAUDE.md names it.
 - **Depends on:** none
 - **Verification:** grep `\.\$transaction(` in `application/` → only the helper; treasury suites.
+- **Done 2026-11-28:** `readInTenantSnapshot(context, work)` in `infrastructure/context/tenant-transaction.ts`:
+  Repeatable Read, then `SET TRANSACTION READ ONLY`, the same scope swap as `runInTenantTransaction` (one private
+  `openTenantTransaction` now does both), joining an enclosing transaction unchanged. Used by the three treasury reads,
+  and by `FeesService.listAllPayments` (its comment named this task) and `CitizensService.list` / `reviewQueue`
+  (ARCH-04). They now run under 15 s / 60 s instead of Prisma's 2 s / 5 s. Verified on PG17,
+  `tenant-transaction.integration.spec.ts`: the isolation and read-only settings, a row committed by another connection
+  between two reads unseen inside and seen by the Read Committed control, a write through `runInTenantTransaction` inside
+  refused with nothing committed, and inside a writer it joins and leaves it writable. `grep ".$transaction("` in
+  `application/` → `PaymentLedgerService` (ARCH-02, #201) and `BackupService` (DEAD-10) only.
 
 ## [ARCH-07] Move APP_CONFIG out of presentation
 - **Priority:** P2 · **Assignee:** Hashem · **Estimate:** S · **Category:** Architecture
@@ -813,6 +834,10 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Acceptance criteria:** `grep -rn "application/" apps/backend/src/infrastructure | grep -v spec` → 0.
 - **Depends on:** none
 - **Verification:** the grep.
+- **Done 2026-11-28:** `application/common/search-terms.ts` and its spec moved to
+  `domain/value-objects/search-terms.ts` (pure, no imports; beside `tenant-schema-name.ts` for the same reason), eight
+  importers repointed. The ticket's grep also matches MIME strings (`'application/json'`); the import form,
+  `grep -rn "from '.*application/" apps/backend/src/infrastructure`, → 0, and `src/layer-imports.spec.ts` now holds it.
 
 ## [ARCH-09] Remove application imports of infrastructure outside the allowed entry points
 - **Priority:** P3 · **Assignee:** Hashem · **Estimate:** M · **Category:** Architecture
@@ -820,6 +845,14 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Acceptance criteria:** each moved into application/domain, or added to the allowed list in apps/backend/CLAUDE.md with a reason.
 - **Depends on:** none
 - **Verification:** the grep in the appendix lists only allowed modules.
+- **Done 2026-11-28:** `CadastreAssetsService` (it only wraps the `CADASTRE_STORAGE_SERVICE` port) moved to
+  `application/features/cadastre` and from `InfrastructureModule` to `ApplicationModule`; `kmz-parser.ts` and
+  `parcel-geometry.ts` with their specs beside it (`import-parcels.ts` and the knip baseline repointed).
+  `house-card-guard` and `earnings-registrations` stay in infrastructure and join the allowed list with their reasons
+  (apps/backend/CLAUDE.md): each is a Prisma query shape a repository and a service must share, which domain cannot hold.
+  `src/layer-imports.spec.ts` holds the whole rule (domain → elsewhere, application → presentation or a non-listed
+  infrastructure module, infrastructure → application or presentation), and checks it reads real files and that each
+  listed module exists; each case was seen to fail on a probe file importing across that line.
 
 ## [ARCH-10] Type actorRole and drop its 85 casts
 - **Priority:** P2 · **Assignee:** Hashem · **Estimate:** M · **Category:** Architecture

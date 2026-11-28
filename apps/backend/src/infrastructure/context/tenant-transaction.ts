@@ -1,7 +1,17 @@
 import { Logger } from '@nestjs/common';
-import type { TenantContextService } from './tenant-context.service';
+import { Prisma } from '../../generated/tenant-client';
+import type { TenantContextService, TenantScope } from './tenant-context.service';
 
 const logger = new Logger('TenantTransaction');
+
+/**
+ * Prisma's interactive-transaction bounds when the caller names none: `maxWait`
+ * to be handed a connection, `timeout` to finish. Prisma's own 2 s / 5 s is too
+ * short for a town-wide write. Here, not in `APP_CONFIG`, because infrastructure
+ * does not import the application layer; the writes that need other bounds name
+ * theirs in `APP_CONFIG.transactions`.
+ */
+const TENANT_TRANSACTION_DEFAULTS = { maxWait: 15_000, timeout: 60_000 } as const;
 
 /**
  * Runs `work` in one transaction that every service it calls also writes through.
@@ -28,14 +38,6 @@ const logger = new Logger('TenantTransaction');
  *
  * Joins an enclosing transaction rather than opening a second one.
  */
-/**
- * Prisma's interactive-transaction bounds when the caller names none: `maxWait`
- * to be handed a connection, `timeout` to finish. Prisma's own 2 s / 5 s is too
- * short for a town-wide write. Here, not in `APP_CONFIG`, because infrastructure
- * does not import the application layer; the writes that need other bounds name
- * theirs in `APP_CONFIG.transactions`.
- */
-const TENANT_TRANSACTION_DEFAULTS = { maxWait: 15_000, timeout: 60_000 } as const;
 
 export async function runInTenantTransaction<T>(
   context: TenantContextService,
@@ -45,14 +47,61 @@ export async function runInTenantTransaction<T>(
   const scope = context.require();
   if (scope.transaction) return work();
 
+  return openTenantTransaction(context, scope, work, {
+    maxWait: options.maxWait ?? TENANT_TRANSACTION_DEFAULTS.maxWait,
+    timeout: options.timeout ?? TENANT_TRANSACTION_DEFAULTS.timeout,
+  });
+}
+
+/**
+ * Runs the reads in `work` against one snapshot of the municipality's data.
+ *
+ * For a screen whose figures must agree with each other: a page and its count,
+ * a statement and the sums its opening balance is worked back from, a day's
+ * sheet. Postgres's default, Read Committed, takes a new snapshot for every
+ * statement, so two reads in one ordinary transaction (or one array-form
+ * `$transaction([...])`) can each see a different set of committed rows. Repeatable
+ * Read takes the snapshot at the first read and holds it to the end.
+ *
+ * The transaction is also READ ONLY, so a write that reaches it, through a
+ * service called inside or through `runInTenantTransaction` (which joins it), is
+ * refused by Postgres instead of committing in a read.
+ *
+ * `this.db` / `context.prisma` inside `work` is the snapshot's client, as in
+ * `runInTenantTransaction`. Inside an enclosing transaction it joins that one
+ * and changes nothing: an isolation level cannot be raised once a transaction
+ * has read, and the enclosing writer must stay writable.
+ */
+export async function readInTenantSnapshot<T>(
+  context: TenantContextService,
+  work: () => Promise<T>,
+): Promise<T> {
+  const scope = context.require();
+  if (scope.transaction) return work();
+
+  return openTenantTransaction(
+    context,
+    scope,
+    async () => {
+      await context.prisma.$executeRaw`SET TRANSACTION READ ONLY`;
+      return work();
+    },
+    { ...TENANT_TRANSACTION_DEFAULTS, isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+  );
+}
+
+/** Opens the transaction, swaps it into the scope, and runs the after-commit queue. */
+async function openTenantTransaction<T>(
+  context: TenantContextService,
+  scope: TenantScope,
+  work: () => Promise<T>,
+  options: { maxWait: number; timeout: number; isolationLevel?: Prisma.TransactionIsolationLevel },
+): Promise<T> {
   const afterCommit: Array<() => unknown> = [];
   const result = await scope.prisma.$transaction(
     (tx) =>
       context.run({ ...scope, prisma: tx as never, transaction: { afterCommit } }, work),
-    {
-      maxWait: options.maxWait ?? TENANT_TRANSACTION_DEFAULTS.maxWait,
-      timeout: options.timeout ?? TENANT_TRANSACTION_DEFAULTS.timeout,
-    },
+    options,
   );
 
   /*

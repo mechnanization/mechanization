@@ -22,7 +22,7 @@ import { TenantContextService } from '../context/tenant-context.service';
 import { citizenPhoneRuleError } from '../prisma/check-violation';
 import { foreignKeyViolated, isUniqueViolation, isUniqueViolationOn } from '../prisma/prisma-errors';
 import { tenantSchemaRef } from '../prisma/tenant-schema-ref';
-import { normalizeSearchText } from '../../application/common/search-terms';
+import { normalizeSearchText } from '../../domain/value-objects/search-terms';
 
 /** Where an identity-document clash is recorded on the new citizen's file. */
 const IDENTITY_DOC_PATH = 'personal.identityDocNumber';
@@ -145,6 +145,8 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
     };
 
     try {
+      // Its own transaction, not `runInTenantTransaction`: the race recovery in the `catch` reads the
+      // winning row after this one rolled back, which inside a caller's transaction would fail (ARCH-05).
       return await this.db.$transaction(async (tx) => {
         /*
           No «منزل» on a structure of several units (decision D28) — see

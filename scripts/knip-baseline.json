@@ -63,6 +63,11 @@
         "TypedUnit"
       ]
     },
+    "apps/backend/src/application/features/cadastre/parcel-geometry.ts": {
+      "types": [
+        "ParcelBoundary"
+      ]
+    },
     "apps/backend/src/application/features/citizens/citizen-merge.plan.ts": {
       "exports": [
         "MAX_MERGED_CARDS"
@@ -193,11 +198,6 @@
     "apps/backend/src/infrastructure/cadastre/cadastre-storage.service.ts": {
       "files": [
         "apps/backend/src/infrastructure/cadastre/cadastre-storage.service.ts"
-      ]
-    },
-    "apps/backend/src/infrastructure/cadastre/parcel-geometry.ts": {
-      "types": [
-        "ParcelBoundary"
       ]
     },
     "apps/backend/src/infrastructure/day3ati/day3ati-news.client.ts": {

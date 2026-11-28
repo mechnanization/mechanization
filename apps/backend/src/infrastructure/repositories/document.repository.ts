@@ -5,6 +5,7 @@ import {
   StoredDocument,
 } from '../../domain/interfaces/document-repository.interface';
 import { TenantContextService } from '../context/tenant-context.service';
+import { runInTenantTransaction } from '../context/tenant-transaction';
 
 @Injectable()
 export class PrismaDocumentRepository implements DocumentRepository {
@@ -17,9 +18,11 @@ export class PrismaDocumentRepository implements DocumentRepository {
   async saveMany(documents: Document[]): Promise<string[]> {
     if (documents.length === 0) return [];
 
-    const created = await this.db.$transaction(
-      documents.map((doc) =>
-        this.db.document.create({
+    // All or none, joining the caller's transaction when there is one.
+    return runInTenantTransaction(this.tenantContext, async () => {
+      const ids: string[] = [];
+      for (const doc of documents) {
+        const row = await this.db.document.create({
           data: {
             registrationId: doc.props.registrationId,
             propertyEntryId: doc.props.propertyEntryId ?? null,
@@ -29,11 +32,11 @@ export class PrismaDocumentRepository implements DocumentRepository {
             sizeBytes: doc.props.sizeBytes,
           },
           select: { id: true },
-        }),
-      ),
-    );
-
-    return created.map((row) => row.id);
+        });
+        ids.push(row.id);
+      }
+      return ids;
+    });
   }
 
   async listByRegistration(registrationId: string): Promise<StoredDocument[]> {

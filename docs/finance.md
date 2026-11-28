@@ -1228,8 +1228,8 @@ required for closing. Printable.
   the treasury started, not money received that day: the report adds them to the
   opening balance, never to the receipts (art. 101 keeps the two apart). Opening +
   receipts − payments = closing still holds (`summariseDay`'s `opening`).
-- **One snapshot.** Every figure on the sheet is read in one `RepeatableRead`
-  transaction, as the wallet statement is, so a voucher or a recount committed
+- **One snapshot.** Every figure on the sheet is read in one `readInTenantSnapshot`
+  (Repeatable Read, read only; audit ARCH-06), as the wallet statement is, so a voucher or a recount committed
   while the report is read is on none of it rather than on half of it.
 
 ### 7.5 Whish and bank
@@ -1695,7 +1695,7 @@ the recorder of a flagged exchange.
   - The page comes from a schema-qualified `UNION ALL` of the two voucher tables. The
     count, the per-currency sums and the day totals are built by one function, so they share
     one filter.
-  - Every read runs in one REPEATABLE READ transaction, so a voucher cancelled mid-read
+  - Every read runs in one `readInTenantSnapshot` (Repeatable Read, read only), so a voucher cancelled mid-read
     cannot appear when cancelled ones were not asked for.
   - `IncomeService` and `ExpensesService` gained `viewsByIds(tx, ids)`, and their lists are
     unchanged.
@@ -1949,7 +1949,7 @@ once after the fix.
   (`TREASURY_REQUEST_KEY_REUSED`) so the screen renews it.
 - A counter retry whose receipt has since been reversed is refused
   (`TRANSACTION_ALREADY_REVERSED`), not answered as recorded.
-- The statement reads its page and its sums in one repeatable-read snapshot, so a
+- The statement reads its page and its sums in one snapshot (`readInTenantSnapshot`), so a
   movement committed during the read cannot shift every running balance.
 - The collector page sums «collected» from his custody's ledger entries, so
   «collected − held» stays what he handed in after a refund paid from the safe.
