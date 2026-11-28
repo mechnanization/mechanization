@@ -28,10 +28,10 @@ import type { BlockRefusal, ErrorCode, ErrorKind, ErrorParams } from '@mechaniza
  * screen, so it must not carry a name, a phone number or a رقم مرجعي — those go
  * in `params` if the screen needs them.
  *
- * The older form, `new ConflictError('نص عربي', details)`, still compiles: its
- * message is what the screen shows, and its code is the error's kind. It is
- * kept only for the sites not yet converted, and `error-codes.ratchet.spec.ts`
- * fails if their number grows.
+ * The constructors still take a bare string as their first argument (its
+ * message would be what the screen shows, and its code the error's kind), but
+ * no throw site uses it since ARCH-14 (2026-11-28): `no-prose-throws.spec.ts`
+ * fails on one.
  */
 export interface DomainErrorInit {
   code: ErrorCode;

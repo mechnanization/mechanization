@@ -100,7 +100,10 @@ export class OccupancyWritesService {
         unitArea: true,
       },
     });
-    if (!unit) throw new NotFoundError('الوحدة غير موجودة');
+    if (!unit) throw new NotFoundError({
+      code: 'UNIT_NOT_FOUND',
+      message: 'Unit was not found',
+    });
 
     /*
       Ahead of the citizen lookup, because it is a fact about the unit alone.
@@ -112,7 +115,11 @@ export class OccupancyWritesService {
 
     const citizen = await this.db.user.findUnique({ where: { id: input.citizenId } });
     if (!citizen || citizen.kind !== 'CITIZEN') {
-      throw new ValidationError('المواطن غير موجود', { citizenId: input.citizenId });
+      throw new ValidationError({
+        code: 'CITIZEN_NOT_FOUND',
+        message: `Citizen ${input.citizenId} was not found`,
+        details: { citizenId: input.citizenId },
+      });
     }
     // A file folded into another is nobody to record in a flat — see `assertNotMergedAway`.
     await assertNotMergedAway(this.db, citizen.id);
@@ -156,11 +163,11 @@ export class OccupancyWritesService {
     const standing = await activeVacancy(this.db, input.unitId);
     if (standing && contradictsVacancy(input.role, input.unitStatus)) {
       if (!input.endsVacancy) {
-        throw new ConflictError(
-          `الوحدة ${unit.unitCode} مؤكَّد شغورها منذ ${standing.observedAt
-            .toISOString()
-            .slice(0, 10)}. تسجيل من يشغلها يُنهي تأكيد الشغور`,
-          {
+        throw new ConflictError({
+          code: 'UNIT_VACANCY_STANDING',
+          message: `Unit ${unit.unitCode} is confirmed vacant`,
+          params: { unitCode: unit.unitCode, since: standing.observedAt.toISOString().slice(0, 10) },
+          details: {
             vacancy: {
               id: standing.id,
               basis: standing.basis,
@@ -168,7 +175,7 @@ export class OccupancyWritesService {
               notes: standing.notes,
             },
           },
-        );
+        });
       }
 
       /*
@@ -995,7 +1002,10 @@ export class OccupancyWritesService {
       where: { id: occupancyId },
       include: { unit: { select: { buildingId: true, unitCode: true } } },
     });
-    if (!existing) throw new NotFoundError('سجل الإشغال غير موجود');
+    if (!existing) throw new NotFoundError({
+      code: 'OCCUPANCY_NOT_FOUND',
+      message: 'Occupancy was not found',
+    });
 
     /*
       Ending an ended spell is refused rather than re-dated.
@@ -1005,7 +1015,10 @@ export class OccupancyWritesService {
       rewrote *when* somebody left. The first answer stands.
     */
     if (existing.toDate) {
-      throw new ConflictError('هذا الإشغال منتهٍ مسبقاً');
+      throw new ConflictError({
+        code: 'OCCUPANCY_ALREADY_ENDED',
+        message: 'Occupancy already ended',
+      });
     }
 
     /*
@@ -1023,17 +1036,20 @@ export class OccupancyWritesService {
         ? input.reason === 'OWNERSHIP_TRANSFERRED'
         : input.reason === 'MOVED_OUT');
     if (!fits) {
-      throw new ValidationError(
-        existing.role === 'OWNER'
-          ? 'إنهاء ملكية يكون ببيع أو نقل ملكية، أو لأنها سُجِّلت بالخطأ'
-          : 'إنهاء إشغال مستأجر أو شاغل يكون بخروجه من الوحدة، أو لأنه سُجِّل بالخطأ',
-        { reason: input.reason },
-      );
+      throw new ValidationError({
+        code: existing.role === 'OWNER' ? 'OWNERSHIP_END_REASON_INVALID' : 'TENANCY_END_REASON_INVALID',
+        message: `${input.reason} does not end a ${existing.role} occupancy`,
+        details: { reason: input.reason },
+      });
     }
 
     const toDate = input.toDate ?? new Date();
     if (toDate < existing.fromDate) {
-      throw new ValidationError('تاريخ الانتهاء قبل تاريخ بدء الإشغال', { toDate });
+      throw new ValidationError({
+        code: 'OCCUPANCY_END_BEFORE_START',
+        message: 'The end date is before the occupancy began',
+        details: { toDate },
+      });
     }
 
     const updated = await this.db.unitOccupancy.update({

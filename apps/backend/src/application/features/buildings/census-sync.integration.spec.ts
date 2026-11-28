@@ -850,7 +850,7 @@ describeIfDb('CensusSyncService', () => {
 
     await expect(
       occupancyWrites.recordOccupancy({ unitId: units[0]!.id, citizenId: tenantId, role: 'TENANT' }, actor()),
-    ).rejects.toThrow('مسكن');
+    ).rejects.toThrow(expect.objectContaining({ code: 'NON_RESIDENT_DWELLING_OCCUPANT' }));
     expect(
       await db.unitOccupancy.count({ where: { unitId: units[0]!.id, citizenId: tenantId } }),
     ).toBe(0);

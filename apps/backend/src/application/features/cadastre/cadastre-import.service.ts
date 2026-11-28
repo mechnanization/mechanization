@@ -63,7 +63,10 @@ export class CadastreImportService {
     const { parcels, lines, skipped } = this.extract(geojson);
 
     if (parcels.length === 0 && lines.length === 0) {
-      throw new ValidationError('لم يتم العثور على أي عقارات أو حدود صالحة في الملف');
+      throw new ValidationError({
+        code: 'CADASTRE_FILE_EMPTY',
+        message: 'No valid parcels or boundary in the file',
+      });
     }
 
     // The upload carries lines and labels but no shapes; the zone editor needs
@@ -150,7 +153,10 @@ export class CadastreImportService {
     try {
       json = JSON.parse(buffer.toString('utf8'));
     } catch {
-      throw new ValidationError('الملف ليس بصيغة JSON صالحة');
+      throw new ValidationError({
+        code: 'CADASTRE_FILE_NOT_JSON',
+        message: 'The file is not valid JSON',
+      });
     }
 
     if (
@@ -159,7 +165,10 @@ export class CadastreImportService {
       (json as { type?: unknown }).type !== 'FeatureCollection' ||
       !Array.isArray((json as { features?: unknown }).features)
     ) {
-      throw new ValidationError('الملف يجب أن يكون GeoJSON من نوع FeatureCollection');
+      throw new ValidationError({
+        code: 'CADASTRE_FILE_NOT_FEATURE_COLLECTION',
+        message: 'The file is not a GeoJSON FeatureCollection',
+      });
     }
 
     return json as { type: string; features: unknown[] };

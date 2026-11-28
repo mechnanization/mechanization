@@ -28,13 +28,13 @@ describe('payoutAllowance', () => {
   it('never allows more than is owed', () => {
     const allowance = payoutAllowance({ pendingBalance: 12.5 });
     expect(payoutRefusal(allowance, 12.5)).toBeNull();
-    expect(payoutRefusal(allowance, 13)).toContain('الرصيد المستحق');
+    expect(payoutRefusal(allowance, 13)).toEqual({ code: 'INSPECTOR_PAYOUT_EXCEEDS_OWED', params: { owed: '12.50' } });
   });
 
   it('refuses when nothing is owed, whatever the amount', () => {
     const allowance = payoutAllowance({ pendingBalance: 0 });
     expect(allowance).toEqual({ allowed: false, reason: 'NOTHING_OWED', owed: 0 });
-    expect(payoutRefusal(allowance, 0.01)).toBe('لا يوجد رصيد مستحق لهذا المفتش.');
+    expect(payoutRefusal(allowance, 0.01)).toEqual({ code: 'INSPECTOR_PAYOUT_NOTHING_OWED', params: {} });
   });
 
   it('reads a negative balance as nothing owed', () => {
@@ -62,17 +62,17 @@ describe('payoutRefusal without the figure', () => {
   it('says the amount is more than is owed, and names no balance', () => {
     const allowance = payoutAllowance({ pendingBalance: 123 });
     const refusal = payoutRefusal(allowance, 200, { showOwed: false });
-    expect(refusal).toBe('المبلغ أكبر من الرصيد المستحق.');
-    expect(refusal).not.toContain('123');
+    expect(refusal).toEqual({ code: 'INSPECTOR_PAYOUT_OVER_OWED', params: {} });
     expect(payoutRefusal(allowance, 123, { showOwed: false })).toBeNull();
     // The manager's refusal keeps it.
-    expect(payoutRefusal(allowance, 200)).toContain('123.00');
+    expect(payoutRefusal(allowance, 200)?.params).toEqual({ owed: '123.00' });
   });
 
   it('gives nothing owed the same words, so it is not told apart from a balance short of the amount', () => {
-    expect(payoutRefusal(payoutAllowance({ pendingBalance: 0 }), 5, { showOwed: false })).toBe(
-      'المبلغ أكبر من الرصيد المستحق.',
-    );
+    expect(payoutRefusal(payoutAllowance({ pendingBalance: 0 }), 5, { showOwed: false })).toEqual({
+      code: 'INSPECTOR_PAYOUT_OVER_OWED',
+      params: {},
+    });
   });
 });
 

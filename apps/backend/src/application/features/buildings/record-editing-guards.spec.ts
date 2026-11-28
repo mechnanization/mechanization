@@ -32,42 +32,40 @@ describe('unitsOutsideFloors', () => {
 });
 
 describe('nonResidentUnitConflict', () => {
+  // The words are the message files' (ARCH-12); `api-errors.test.ts` renders every code in both languages.
   it('refuses making a unit a dwelling under a non-resident tenant, naming them', () => {
-    const message = nonResidentUnitConflict({
-      unitCode: '0002',
-      nonResidentOccupants: ['سامي تجربة'],
-      ownerOccupiedByNonResident: false,
-    });
-    expect(message).toMatch(/0002/);
-    expect(message).toMatch(/سامي تجربة/);
-    // Both ways out, because only the officer knows which is true.
-    expect(message).toMatch(/مقيم/);
-    expect(message).toMatch(/أنهِ إيجاره/);
+    expect(
+      nonResidentUnitConflict({
+        unitCode: '0002',
+        nonResidentOccupants: ['سامي تجربة'],
+        ownerOccupiedByNonResident: false,
+      }),
+    ).toEqual({ code: 'NON_RESIDENT_TENANT_ON_DWELLING', params: { unitCode: '0002', names: 'سامي تجربة', count: 1 } });
   });
 
   it('names a person once when their spell and their card both hold the unit', () => {
-    const message = nonResidentUnitConflict({
+    const refusal = nonResidentUnitConflict({
       unitCode: '0002',
       nonResidentOccupants: ['سامي تجربة', 'سامي تجربة'],
       ownerOccupiedByNonResident: false,
     });
-    expect(message!.match(/سامي تجربة/g)).toHaveLength(1);
+    expect(refusal?.params).toMatchObject({ names: 'سامي تجربة', count: 1 });
   });
 
   it('refuses «مشغولة من المالك» when every owner lives elsewhere', () => {
-    const message = nonResidentUnitConflict({
-      unitCode: '0101',
-      nonResidentOccupants: [],
-      ownerOccupiedByNonResident: true,
-    });
-    expect(message).toMatch(/مسكن موسمي/);
+    expect(
+      nonResidentUnitConflict({ unitCode: '0101', nonResidentOccupants: [], ownerOccupiedByNonResident: true }),
+    ).toEqual({ code: 'OWNER_OCCUPIED_BY_NON_RESIDENT', params: { unitCode: '0101' } });
   });
 
   it('refuses «مسكن موسمي» on a home every owner of which is an estate or an institution, in its words', () => {
     const conflict = (seasonalOwner: string) =>
       nonResidentUnitConflict({ unitCode: '0101', nonResidentOccupants: [], ownerOccupiedByNonResident: false, seasonalOwner });
-    expect(conflict('ESTATE')).toMatch(/المرحوم لا يسكن الوحدة 0101/);
-    expect(conflict('INSTITUTION')).toMatch(/الجهة لا تسكن المسكن 0101/);
+    expect(conflict('ESTATE')).toEqual({ code: 'OWNER_DOES_NOT_LIVE_THERE', params: { unitCode: '0101', residence: 'ESTATE' } });
+    expect(conflict('INSTITUTION')).toEqual({
+      code: 'OWNER_DOES_NOT_LIVE_THERE',
+      params: { unitCode: '0101', residence: 'INSTITUTION' },
+    });
   });
 
   it('lets everything else through', () => {

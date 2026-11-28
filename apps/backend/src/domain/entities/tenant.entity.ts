@@ -90,7 +90,10 @@ export class Tenant {
    */
   assertServable(): void {
     if (!this.props.isActive) {
-      throw new ForbiddenError('This municipality is not currently accepting requests');
+      throw new ForbiddenError({
+        code: 'TENANT_NOT_ACCEPTING',
+        message: 'This municipality is not currently accepting requests',
+      });
     }
     if (!this.props.provisionedAt) {
       throw new TenantNotProvisionedError(this.props.slug);
@@ -112,7 +115,10 @@ export class Tenant {
   assertSchemaNameConsistent(): void {
     const expected = TenantSlug.parse(this.props.slug).schemaName;
     if (expected !== this.props.schemaName) {
-      throw new ForbiddenError('Municipality registry entry is inconsistent');
+      throw new ForbiddenError({
+        code: 'TENANT_REGISTRY_INCONSISTENT',
+        message: 'Municipality registry entry is inconsistent',
+      });
     }
   }
 }

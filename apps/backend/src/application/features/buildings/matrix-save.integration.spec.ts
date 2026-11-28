@@ -163,10 +163,10 @@ describeIfDb('UnitsService.saveMatrix', () => {
   it('refuses a unit that is not this building’s, and a screen somebody saved over', async () => {
     const first = await building('MX-4');
     const other = await building('MX-5');
-    await expect(save(first.id, { building: {}, remove: [other.units[0]!.id] })).rejects.toThrow(/لم تعد في هذا المبنى/);
+    await expect(save(first.id, { building: {}, remove: [other.units[0]!.id] })).rejects.toThrow(expect.objectContaining({ code: 'MATRIX_UNIT_LEFT_BUILDING' }));
     await expect(
       save(first.id, { building: { name: 'x' }, expectedUpdatedAt: new Date(Date.now() - 86_400_000).toISOString() }),
-    ).rejects.toThrow(/بعد أن فتحتَه/);
+    ).rejects.toThrow(expect.objectContaining({ code: 'BUILDING_EDITED_SINCE_OPENED' }));
   });
 
   it('lets only one of two saves from the same screen through, even at the same moment', async () => {
@@ -180,6 +180,6 @@ describeIfDb('UnitsService.saveMatrix', () => {
 
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     const refused = results.find((result) => result.status === 'rejected') as PromiseRejectedResult;
-    expect(String(refused.reason)).toMatch(/بعد أن فتحتَه/);
+    expect(refused.reason).toMatchObject({ code: 'BUILDING_EDITED_SINCE_OPENED' });
   });
 });

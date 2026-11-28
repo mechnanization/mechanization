@@ -105,7 +105,10 @@ export class OtpService {
     const recent = await this.challenges.countRecent(phone.e164, hourAgo);
     if (recent >= APP_CONFIG.otp.maxPerHour) {
       // Protects the citizen from SMS-bombing and the municipality from the bill.
-      throw new ConflictError('تم إرسال عدد كبير من الرموز — يرجى المحاولة بعد ساعة');
+      throw new ConflictError({
+        code: 'OTP_TOO_MANY_SENT',
+        message: 'Too many codes sent in the last hour',
+      });
     }
 
     const code = String(randomInt(0, 10 ** APP_CONFIG.otp.codeLength)).padStart(
@@ -152,9 +155,10 @@ export class OtpService {
        * nobody received is a citizen locked out, not a convenience.
        */
       if (this.isProduction) {
-        throw new ConflictError(
-          'تعذّر إرسال الرمز حالياً. يرجى إعادة المحاولة، أو مراجعة البلدية لتسجيل طلبك.',
-        );
+        throw new ConflictError({
+          code: 'OTP_SEND_FAILED',
+          message: 'The code could not be sent',
+        });
       }
 
       this.logger.warn(
@@ -186,12 +190,18 @@ export class OtpService {
     const challenge = await this.challenges.findActive(phone.e164);
 
     if (!challenge) {
-      throw new UnauthorizedError('الرمز غير صالح أو منتهي الصلاحية');
+      throw new UnauthorizedError({
+        code: 'OTP_CODE_EXPIRED',
+        message: 'No live code for this phone',
+      });
     }
 
     if (challenge.attempts >= APP_CONFIG.otp.maxAttempts) {
       await this.challenges.consume(challenge.id);
-      throw new UnauthorizedError('تم تجاوز عدد المحاولات — يرجى طلب رمز جديد');
+      throw new UnauthorizedError({
+        code: 'OTP_TOO_MANY_ATTEMPTS',
+        message: 'Too many attempts on this code',
+      });
     }
 
     const matches = await this.hasher.verify(code.trim(), challenge.codeHash);
@@ -200,7 +210,10 @@ export class OtpService {
       if (attempts >= APP_CONFIG.otp.maxAttempts) {
         await this.challenges.consume(challenge.id);
       }
-      throw new UnauthorizedError('الرمز غير صحيح');
+      throw new UnauthorizedError({
+        code: 'OTP_CODE_INCORRECT',
+        message: 'Wrong code',
+      });
     }
 
     // Single-use: a code that still works after login is a code worth stealing.
@@ -215,7 +228,10 @@ export class OtpService {
 
   assertDeliverable(): void {
     if (!this.sms.hasFallback && this.isProduction) {
-      throw new ValidationError('No fallback SMS route configured');
+      throw new ValidationError({
+        code: 'SMS_FALLBACK_NOT_CONFIGURED',
+        message: 'No fallback SMS route configured',
+      });
     }
   }
 }

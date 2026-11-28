@@ -105,7 +105,10 @@ export class TenantService {
   private async fetchAndCache(slug: string, key: string): Promise<Tenant> {
     const tenant = await this.tenants.findBySlug(slug);
     if (!tenant) {
-      throw new NotFoundError('Municipality', slug);
+      throw new NotFoundError({
+        code: 'TENANT_NOT_FOUND',
+        message: 'Tenant was not found',
+      });
     }
 
     const ttl = this.config.getOrThrow<number>('TENANT_CACHE_TTL_SECONDS');

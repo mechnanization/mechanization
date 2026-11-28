@@ -45,7 +45,10 @@ export class SupabaseStorageService implements ImageStorageService {
 
     if (error) {
       this.logger.error(`Upload failed for ${path}: ${error.message}`);
-      throw new ValidationError('تعذّر رفع الملف — يرجى المحاولة مرة أخرى');
+      throw new ValidationError({
+        code: 'FILE_UPLOAD_FAILED',
+        message: 'The upload to Supabase failed',
+      });
     }
 
     return { storagePath: path };
@@ -63,7 +66,10 @@ export class SupabaseStorageService implements ImageStorageService {
 
     if (error || !data) {
       this.logger.error(`Signing failed for ${storagePath}: ${error?.message}`);
-      throw new ValidationError('تعذّر فتح الملف');
+      throw new ValidationError({
+        code: 'FILE_OPEN_FAILED',
+        message: 'The signed URL could not be created',
+      });
     }
 
     return data.signedUrl;

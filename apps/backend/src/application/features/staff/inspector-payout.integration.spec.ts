@@ -629,7 +629,7 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
 
       // Above what is owed: refused in words that carry no figure, and nothing is written.
       const over = pay({ amount: owed + 1, accountId: safeUsdId, clientRequestId: randomUUID() }, ACCOUNTANT);
-      await expect(over).rejects.toThrow('المبلغ أكبر من الرصيد المستحق.');
+      await expect(over).rejects.toThrow(expect.objectContaining({ code: 'INSPECTOR_PAYOUT_OVER_OWED', params: {} }));
       await expect(over).rejects.not.toThrow(owed.toFixed(2));
 
       // A wallet that does not exist answers alike whether the amount is within what is owed or not.
@@ -641,7 +641,7 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
       expect(await counts()).toEqual(before);
 
       // The manager, who reads the profile, is told the figure.
-      await expect(pay({ amount: owed + 1, accountId: safeUsdId })).rejects.toThrow(`(${owed.toFixed(2)}$)`);
+      await expect(pay({ amount: owed + 1, accountId: safeUsdId })).rejects.toThrow(expect.objectContaining({ code: 'INSPECTOR_PAYOUT_EXCEEDS_OWED', params: { owed: owed.toFixed(2) } }));
     });
 
     it('keeps «تعويضات المسح والجباية» to «صرف عمولة»: the form, a request and an order refuse it', async () => {
@@ -694,7 +694,7 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
       await expect(
         pay({ amount: 1, accountId: safeUsdId, paidAt: new Date().toISOString() }),
       ).rejects.toMatchObject({ code: 'INSPECTOR_PAYOUT_DATE_NOT_ALLOWED' });
-      await expect(pay({ amount: owed + 1, accountId: safeUsdId })).rejects.toThrow('أكبر من الرصيد المستحق');
+      await expect(pay({ amount: owed + 1, accountId: safeUsdId })).rejects.toThrow(expect.objectContaining({ code: 'INSPECTOR_PAYOUT_EXCEEDS_OWED' }));
       await expect(pay({ amount: 1, accountId: randomUUID() })).rejects.toMatchObject({
         code: 'TREASURY_ACCOUNT_NOT_FOUND',
       });

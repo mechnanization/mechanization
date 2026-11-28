@@ -605,7 +605,10 @@ export class AuditService {
       query.entityType === 'User'
         ? await db.user.findFirst({ where: { id: query.entityId, kind: 'CITIZEN' }, select: { id: true } })
         : await db.building.findUnique({ where: { id: query.entityId }, select: { id: true } });
-    if (!exists) throw new NotFoundError(query.entityType === 'User' ? 'Citizen' : 'Building', query.entityId);
+    if (!exists) throw new NotFoundError({
+      code: query.entityType === 'User' ? 'CITIZEN_NOT_FOUND' : 'BUILDING_NOT_FOUND',
+      message: `${query.entityType} ${query.entityId} was not found`,
+    });
 
     /*
       A file others were folded into by «دمج ملفين» carries their history too:

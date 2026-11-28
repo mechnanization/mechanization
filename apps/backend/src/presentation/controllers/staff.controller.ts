@@ -177,7 +177,10 @@ export class StaffController {
     @CurrentUser() user: SessionClaims,
   ) {
     if (user.role !== 'SUPER_ADMIN' && !sameId(user.sub, id)) {
-      throw new ForbiddenError('You do not have permission to view this inspector profile');
+      throw new ForbiddenError({
+        code: 'INSPECTOR_PROFILE_FORBIDDEN',
+        message: 'You do not have permission to view this inspector profile',
+      });
     }
     return this.staff.getInspectorProfile(tenantSlug, id);
   }

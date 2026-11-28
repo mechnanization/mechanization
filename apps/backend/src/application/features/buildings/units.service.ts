@@ -31,7 +31,7 @@ import { houseOnFile, promoteHouseCards, type HouseOnFile, type PromotedCard } f
 import type { BuildingRow, UnitRow } from './building.types';
 import { activeVacancy } from './unit-vacancy';
 import { APP_CONFIG } from '../../common/app.config';
-import { BuildingsService, MatrixSaveResult, changedUnitFields, nonResidentUnitConflict, personName, structuralLabel, toUnitRow } from './buildings.service';
+import { BuildingsService, MatrixSaveResult, changedUnitFields, nonResidentUnitConflict, personName, toUnitRow } from './buildings.service';
 import { StaffActor } from '../../common/actor';
 
 /**
@@ -121,7 +121,10 @@ export class UnitsService {
     actor: StaffActor,
   ): Promise<MatrixSaveResult> {
     const before = await this.db.building.findUnique({ where: { id } });
-    if (!before) throw new NotFoundError('المبنى غير موجود');
+    if (!before) throw new NotFoundError({
+      code: 'BUILDING_NOT_FOUND',
+      message: 'Building was not found',
+    });
     await this.buildings.assertFresh(before, input.expectedUpdatedAt, actor);
 
     const summary = { removed: [] as string[], updated: [] as string[], added: [] as string[] };
@@ -136,7 +139,10 @@ export class UnitsService {
         const S = tenantSchemaRef(this.tenantContext.schemaName);
         await this.db.$queryRaw`SELECT "id" FROM ${S}"buildings" WHERE "id" = ${id}::uuid FOR UPDATE`;
         const locked = await this.db.building.findUnique({ where: { id } });
-        if (!locked) throw new NotFoundError('المبنى غير موجود');
+        if (!locked) throw new NotFoundError({
+          code: 'BUILDING_NOT_FOUND',
+          message: 'Building was not found',
+        });
         await this.buildings.assertFresh(locked, input.expectedUpdatedAt, actor);
 
         // Every unit named must still be this building's — a stale screen could name another's.
@@ -147,7 +153,10 @@ export class UnitsService {
             select: { id: true, unitCode: true },
           });
           if (own.length !== named.length) {
-            throw new ConflictError('إحدى الوحدات لم تعد في هذا المبنى — أعد فتحه لترى المصفوفة الحالية');
+            throw new ConflictError({
+              code: 'MATRIX_UNIT_LEFT_BUILDING',
+              message: 'A unit sent is no longer in this building',
+            });
           }
           const codeOf = new Map(own.map((unit) => [unit.id, unit.unitCode]));
           for (const unitId of input.remove) {
@@ -217,7 +226,10 @@ export class UnitsService {
     actor: StaffActor,
   ): Promise<{ created: number; skipped: number; units: UnitRow[] }> {
     const building = await this.db.building.findUnique({ where: { id: buildingId } });
-    if (!building) throw new NotFoundError('المبنى غير موجود');
+    if (!building) throw new NotFoundError({
+      code: 'BUILDING_NOT_FOUND',
+      message: 'Building was not found',
+    });
 
     const plan =
       blueprint.kind === 'uniform'
@@ -234,9 +246,11 @@ export class UnitsService {
 
     const requested = plan.reduce((sum, entry) => sum + entry.unitCount, 0);
     if (requested > MAX_GENERATED_UNITS) {
-      throw new ValidationError(
-        `عدد الوحدات المطلوب توليدها (${requested}) يتجاوز الحد الأقصى ${MAX_GENERATED_UNITS}`,
-      );
+      throw new ValidationError({
+        code: 'UNIT_GENERATION_TOO_MANY',
+        message: `${requested} units requested, the limit is ${MAX_GENERATED_UNITS}`,
+        params: { requested, max: MAX_GENERATED_UNITS },
+      });
     }
 
     /*
@@ -261,9 +275,11 @@ export class UnitsService {
     */
     const topFloor = plan.reduce((max, entry) => Math.max(max, entry.floor), 0);
     if (topFloor > building.floorsCount - 1) {
-      throw new ValidationError(
-        `الطابق الأعلى في المخطط (${topFloor}) يتجاوز عدد طوابق المبنى (${building.floorsCount}). عدّل عدد الطوابق أو اخفض نطاق الطوابق`,
-      );
+      throw new ValidationError({
+        code: 'UNIT_PLAN_ABOVE_TOP_FLOOR',
+        message: `The plan reaches floor ${topFloor} of ${building.floorsCount}`,
+        params: { topFloor, floorsCount: building.floorsCount },
+      });
     }
 
     /*
@@ -405,7 +421,10 @@ export class UnitsService {
     actor: StaffActor,
   ): Promise<UnitRow> {
     const building = await this.db.building.findUnique({ where: { id: buildingId } });
-    if (!building) throw new NotFoundError('المبنى غير موجود');
+    if (!building) throw new NotFoundError({
+      code: 'BUILDING_NOT_FOUND',
+      message: 'Building was not found',
+    });
 
     /*
       «نوع الوحدة» (0109): the type decides `unitType`, so every guard below —
@@ -495,11 +514,11 @@ export class UnitsService {
       });
 
       if (siblings.length > 0) {
-        throw new ConflictError(
-          `يوجد على هذا الطابق ${
-            siblings.length === 1 ? 'وحدة مسجَّلة' : `${siblings.length} وحدات مسجَّلة`
-          } من النوع نفسه (${siblings.map((row) => row.unitCode).join('، ')}). تأكَّد أن هذه وحدة مختلفة قبل المتابعة.`,
-          {
+        throw new ConflictError({
+          code: 'UNIT_SAME_TYPE_ON_FLOOR',
+          message: `${siblings.length} units of this type already stand on the floor`,
+          params: { count: siblings.length, unitCodes: siblings.map((row) => row.unitCode).join(', ') },
+          details: {
             buildingId,
             floor: input.floor,
             unitType: input.unitType,
@@ -512,7 +531,7 @@ export class UnitsService {
               })),
             })),
           },
-        );
+        });
       }
     }
 
@@ -547,7 +566,11 @@ export class UnitsService {
       );
 
       if (input.sequence !== undefined && used.has(input.sequence)) {
-        throw new ConflictError(`الوحدة رقم ${input.sequence} موجودة على هذا الطابق`);
+        throw new ConflictError({
+          code: 'UNIT_SEQUENCE_TAKEN',
+          message: `Unit ${input.sequence} already exists on this floor`,
+          params: { sequence: input.sequence },
+        });
       }
 
       let sequence = input.sequence ?? 1;
@@ -796,7 +819,10 @@ export class UnitsService {
     actor: StaffActor,
   ): Promise<UnitRow> {
     const before = await this.db.unit.findUnique({ where: { id: unitId } });
-    if (!before) throw new NotFoundError('الوحدة غير موجودة');
+    if (!before) throw new NotFoundError({
+      code: 'UNIT_NOT_FOUND',
+      message: 'Unit was not found',
+    });
 
     /*
       «نوع الوحدة» (0109): when a type or a base is sent it decides `unitType`,
@@ -826,10 +852,12 @@ export class UnitsService {
       how the two drift.
     */
     if (input.surveyStatus === 'VACANT_CONFIRMED') {
-      throw new ValidationError(
-        `لتأكيد شغور الوحدة ${before.unitCode} استخدم «تأكيد الشغور» — يُسجَّل مستنده ويمكن إلغاؤه لاحقاً`,
-        { surveyStatus: input.surveyStatus },
-      );
+      throw new ValidationError({
+        code: 'UNIT_VACANCY_USE_CONFIRMATION',
+        message: 'VACANT_CONFIRMED is set through the vacancy confirmation',
+        params: { unitCode: before.unitCode },
+        details: { surveyStatus: input.surveyStatus },
+      });
     }
 
     /*
@@ -847,9 +875,11 @@ export class UnitsService {
       ((input.unitStatus !== undefined && input.unitStatus !== before.unitStatus) ||
         (input.surveyStatus !== undefined && input.surveyStatus !== before.surveyStatus))
     ) {
-      throw new ConflictError(
-        `الوحدة ${before.unitCode} مؤكَّد شغورها. ألغِ تأكيد الشغور أولاً ثم عدّل حالتها`,
-      );
+      throw new ConflictError({
+        code: 'UNIT_VACANCY_CONFIRMED_EDIT',
+        message: `Unit ${before.unitCode} is confirmed vacant`,
+        params: { unitCode: before.unitCode },
+      });
     }
 
     /*
@@ -867,7 +897,11 @@ export class UnitsService {
         where: { buildingId: before.buildingId, floor, sequence, NOT: { id: unitId } },
       });
       if (clash) {
-        throw new ConflictError(`الموقع ${formatUnitCode(floor, sequence)} مشغول بوحدة أخرى`);
+        throw new ConflictError({
+          code: 'UNIT_POSITION_TAKEN',
+          message: 'The position is taken by another unit',
+          params: { position: formatUnitCode(floor, sequence) },
+        });
       }
     }
 
@@ -947,18 +981,19 @@ export class UnitsService {
       ]);
 
       if (liveOccupancies > 0 || liveCardLinks > 0) {
-        // Named separately because they are undone differently: one is ended
+        // Counted separately because they are undone differently: one is ended
         // from the occupancy panel, the other unlinked from the citizen's card.
-        const reasons = [
-          liveOccupancies > 0 ? `مسجَّل عليها ${liveOccupancies} شاغل حالي` : null,
-          liveCardLinks > 0 ? `مرتبطة بـ ${liveCardLinks} بطاقة عقارية` : null,
-        ].filter(Boolean);
-
-        throw new ConflictError(
-          `لا يمكن تحويل الوحدة ${before.unitCode} إلى ${structuralLabel(input.unitType!)}: ` +
-            `${reasons.join(' و')}. ` +
-            `${liveOccupancies > 0 ? 'أنهِ الإشغال' : 'أزل الربط'} أولاً`,
-        );
+        throw new ConflictError({
+          code: 'UNIT_STRUCTURAL_CONVERSION_BLOCKED',
+          message: `Unit ${before.unitCode} has ${liveOccupancies} occupancies and ${liveCardLinks} card links`,
+          params: {
+            unitCode: before.unitCode,
+            unitType: input.unitType!,
+            occupancies: liveOccupancies,
+            cardLinks: liveCardLinks,
+            hasBoth: liveOccupancies > 0 && liveCardLinks > 0 ? 'yes' : 'no',
+          },
+        });
       }
     }
 
@@ -972,10 +1007,12 @@ export class UnitsService {
     */
     const structuralAfter = isStructuralUnitType(input.unitType ?? before.unitType);
     if (structuralAfter && input.unitStatus) {
-      throw new ValidationError(
-        `${structuralLabel(input.unitType ?? before.unitType)} ليس مسكناً ولا محلاً — لا تُسجَّل له حالة إشغال`,
-        { unitStatus: input.unitStatus, unitType: input.unitType ?? before.unitType },
-      );
+      throw new ValidationError({
+        code: 'STRUCTURAL_UNIT_NO_STATUS',
+        message: 'A structural unit takes no unit status',
+        params: { unitType: input.unitType ?? before.unitType },
+        details: { unitStatus: input.unitStatus, unitType: input.unitType ?? before.unitType },
+      });
     }
 
     /*
@@ -1095,7 +1132,12 @@ export class UnitsService {
             : null,
       });
       if (conflict) {
-        throw new ConflictError(conflict, { unitCode: before.unitCode, unitType: typeAfter });
+        throw new ConflictError({
+          code: conflict.code,
+          message: `Unit ${before.unitCode} would hold a non-resident where the record cannot`,
+          params: conflict.params,
+          details: { unitCode: before.unitCode, unitType: typeAfter },
+        });
       }
     }
 
@@ -1226,7 +1268,10 @@ export class UnitsService {
       where: { id: unitId },
       select: { id: true, buildingId: true },
     });
-    if (!target) throw new NotFoundError('الوحدة غير موجودة');
+    if (!target) throw new NotFoundError({
+      code: 'UNIT_NOT_FOUND',
+      message: 'Unit was not found',
+    });
 
     const { updated, changes } = await runInTenantTransaction(this.tenantContext, async () => {
       const S = tenantSchemaRef(this.tenantContext.schemaName);
@@ -1234,7 +1279,10 @@ export class UnitsService {
 
       // Re-read under the lock: the unit may have moved floor since.
       const before = await this.db.unit.findUnique({ where: { id: unitId } });
-      if (!before) throw new NotFoundError('الوحدة غير موجودة');
+      if (!before) throw new NotFoundError({
+        code: 'UNIT_NOT_FOUND',
+        message: 'Unit was not found',
+      });
 
       /*
         The whole building, not the unit's floor: a «دوبلكس» widened on the
@@ -1253,10 +1301,12 @@ export class UnitsService {
 
       const clash = levelSpanOverlap(layouts, self, input);
       if (clash) {
-        throw new ConflictError(
-          `لا يمكن توسيع الوحدة ${before.unitCode} فوق الوحدة ${clash.unit.unitCode} — الأعمدة ${input.startCol}–${input.endCol} ليست فارغة`,
-          { unitCode: before.unitCode, blockedBy: clash.unit.unitCode },
-        );
+        throw new ConflictError({
+          code: 'UNIT_SPAN_BLOCKED',
+          message: `Unit ${before.unitCode} would overlap ${clash.unit.unitCode}`,
+          params: { unitCode: before.unitCode, blockedBy: clash.unit.unitCode, startCol: input.startCol, endCol: input.endCol },
+          details: { unitCode: before.unitCode, blockedBy: clash.unit.unitCode },
+        });
       }
 
       const pins = blocks.filter(
@@ -1382,7 +1432,10 @@ export class UnitsService {
       where: { id: unitId },
       select: { id: true, buildingId: true, unitCode: true, floor: true, sequence: true },
     });
-    if (!unit) throw new NotFoundError('الوحدة غير موجودة');
+    if (!unit) throw new NotFoundError({
+      code: 'UNIT_NOT_FOUND',
+      message: 'Unit was not found',
+    });
 
     const [current, historical, visits, damage, cards, vacancies] = await Promise.all([
       this.db.unitOccupancy.count({ where: { unitId, toDate: null } }),
@@ -1406,39 +1459,51 @@ export class UnitsService {
     ]);
 
     if (current > 0) {
-      throw new ConflictError(
-        `لا يمكن حذف الوحدة ${unit.unitCode}: يوجد ${current} إشغال قائم عليها. أنهِ الإشغال أولاً`,
-      );
+      throw new ConflictError({
+        code: 'UNIT_DELETE_HAS_OCCUPANCIES',
+        message: `Unit ${unit.unitCode} has ${current} current occupancies`,
+        params: { unitCode: unit.unitCode, count: current },
+      });
     }
 
     if (historical > 0) {
-      throw new ConflictError(
-        `لا يمكن حذف الوحدة ${unit.unitCode}: سُجِّل فيها ${historical} إشغال سابق، وحذفها يمحو سجل من سكنها. صحّح بيانات الوحدة بدلاً من حذفها`,
-      );
+      throw new ConflictError({
+        code: 'UNIT_DELETE_HAS_PAST_OCCUPANCIES',
+        message: `Unit ${unit.unitCode} has ${historical} past occupancies`,
+        params: { unitCode: unit.unitCode, count: historical },
+      });
     }
 
     if (cards > 0) {
-      throw new ConflictError(
-        `لا يمكن حذف الوحدة ${unit.unitCode}: ${cards} بطاقة عقار في سجل المواطنين تشير إليها. أزل الربط من ملف المواطن أولاً`,
-      );
+      throw new ConflictError({
+        code: 'UNIT_DELETE_HAS_CARDS',
+        message: `Unit ${unit.unitCode} is on ${cards} property cards`,
+        params: { unitCode: unit.unitCode, count: cards },
+      });
     }
 
     if (damage > 0) {
-      throw new ConflictError(
-        `لا يمكن حذف الوحدة ${unit.unitCode}: عليها ${damage} كشف ضرر. كشوف الضرر مستند تعويض ولا تُحذف مع الوحدة`,
-      );
+      throw new ConflictError({
+        code: 'UNIT_DELETE_HAS_DAMAGE',
+        message: `Unit ${unit.unitCode} has ${damage} damage assessments`,
+        params: { unitCode: unit.unitCode, count: damage },
+      });
     }
 
     if (visits > 0) {
-      throw new ConflictError(
-        `لا يمكن حذف الوحدة ${unit.unitCode}: سُجِّلت عليها ${visits} زيارة ميدانية. صحّح بيانات الوحدة بدلاً من حذفها`,
-      );
+      throw new ConflictError({
+        code: 'UNIT_DELETE_HAS_VISITS',
+        message: `Unit ${unit.unitCode} has ${visits} visits`,
+        params: { unitCode: unit.unitCode, count: visits },
+      });
     }
 
     if (vacancies > 0) {
-      throw new ConflictError(
-        `لا يمكن حذف الوحدة ${unit.unitCode}: سُجِّل عليها ${vacancies} تأكيد شغور، وعليه تُعفى من رسوم الإشغال. ألغِ تأكيد الشغور بسبب «سُجِّل بالخطأ» إن لم تكن الوحدة موجودة أصلاً`,
-      );
+      throw new ConflictError({
+        code: 'UNIT_DELETE_HAS_VACANCIES',
+        message: `Unit ${unit.unitCode} has ${vacancies} vacancy confirmations`,
+        params: { unitCode: unit.unitCode, count: vacancies },
+      });
     }
 
     // Its fee exemption history, granted or lifted, keys onto it with RESTRICT (0104).

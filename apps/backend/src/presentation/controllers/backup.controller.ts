@@ -101,7 +101,10 @@ function readBody(request: Request): Promise<Buffer> {
       size += chunk.length;
       if (size > MAX_SNAPSHOT_BYTES) {
         request.destroy();
-        reject(new ValidationError('حجم النسخة الاحتياطية يتجاوز الحد المسموح.'));
+        reject(new ValidationError({
+          code: 'BACKUP_TOO_LARGE',
+          message: 'The backup is over the size limit',
+        }));
         return;
       }
       chunks.push(chunk);
@@ -109,12 +112,18 @@ function readBody(request: Request): Promise<Buffer> {
 
     request.on('end', () => {
       if (size === 0) {
-        reject(new ValidationError('لم تُرفق نسخة احتياطية.'));
+        reject(new ValidationError({
+          code: 'BACKUP_FILE_MISSING',
+          message: 'No backup attached',
+        }));
         return;
       }
       resolve(Buffer.concat(chunks));
     });
 
-    request.on('error', () => reject(new ValidationError('تعذّرت قراءة النسخة الاحتياطية.')));
+    request.on('error', () => reject(new ValidationError({
+      code: 'BACKUP_READ_FAILED',
+      message: 'The backup could not be read',
+    })));
   });
 }

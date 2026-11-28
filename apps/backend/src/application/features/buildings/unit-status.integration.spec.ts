@@ -355,7 +355,7 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
 
     await expect(
       within(() => unitsService.updateUnit(unitId, { unitStatus: 'OWNER_OCCUPIED' } as never, actor())),
-    ).rejects.toThrow(/مستأجر أو شاغل مسجَّل/);
+    ).rejects.toThrow(expect.objectContaining({ code: 'UNIT_STATUS_OWNER_SIDE_HAS_OCCUPANTS' }));
     expect(await unitStatus(unitId)).toBe('RENTED');
   });
 

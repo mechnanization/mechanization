@@ -384,7 +384,7 @@ describe('S3StorageService first use without configuration', () => {
     const error = await rejection(service({ AWS_REGION: '' }).upload(request()));
 
     expect(error).toBeInstanceOf(ValidationError);
-    expect(error.message).toBe('تعذّر رفع الملف — يرجى المحاولة مرة أخرى');
+    expect(error).toMatchObject({ code: 'FILE_UPLOAD_FAILED' });
     expect(error.message).not.toMatch(/AWS_REGION/);
     expect(loggedErrors.join('\n')).toMatch(/AWS_REGION/);
     expect(mockSend).not.toHaveBeenCalled();
@@ -565,7 +565,7 @@ describe('S3StorageService.upload', () => {
     expect(sentCommand().input.ACL).toBeUndefined();
   });
 
-  it('surfaces a 412 PreconditionFailed as the Arabic validation error', async () => {
+  it('surfaces a 412 PreconditionFailed as the coded validation error', async () => {
     mockSend.mockRejectedValue(
       s3Error(
         'PreconditionFailed',
@@ -577,8 +577,8 @@ describe('S3StorageService.upload', () => {
     const error = await rejection(service().upload(request()));
 
     expect(error).toBeInstanceOf(ValidationError);
-    expect(error.message).toBe('تعذّر رفع الملف — يرجى المحاولة مرة أخرى');
-    expect((error as ValidationError).code).toBe('VALIDATION_FAILED');
+    expect(error).toMatchObject({ code: 'FILE_UPLOAD_FAILED' });
+    expect((error as ValidationError).kind).toBe('VALIDATION_FAILED');
   });
 
   it.each([
@@ -591,7 +591,7 @@ describe('S3StorageService.upload', () => {
     const error = await rejection(service().upload(request()));
 
     expect(error).toBeInstanceOf(ValidationError);
-    expect(error.message).toBe('تعذّر رفع الملف — يرجى المحاولة مرة أخرى');
+    expect(error).toMatchObject({ code: 'FILE_UPLOAD_FAILED' });
   });
 
   /**
@@ -731,8 +731,8 @@ describe('S3StorageService.createSignedUrl', () => {
     );
 
     expect(error).toBeInstanceOf(ValidationError);
-    expect(error.message).toBe('تعذّر فتح الملف');
-    expect((error as ValidationError).code).toBe('VALIDATION_FAILED');
+    expect(error).toMatchObject({ code: 'FILE_OPEN_FAILED' });
+    expect((error as ValidationError).kind).toBe('VALIDATION_FAILED');
     expect(mockGetSignedUrl).not.toHaveBeenCalled();
 
     // The key is the only way to tell a botched migration from a deleted
@@ -758,18 +758,18 @@ describe('S3StorageService.createSignedUrl', () => {
     const error = await rejection(service().createSignedUrl('albazourieh/citizen-1111/x.jpg', 60));
 
     expect(error).toBeInstanceOf(ValidationError);
-    expect(error.message).toBe('تعذّر فتح الملف');
+    expect(error).toMatchObject({ code: 'FILE_OPEN_FAILED' });
     expect(mockGetSignedUrl).not.toHaveBeenCalled();
     expect(loggedErrors.join('\n')).toContain(name);
   });
 
-  it('turns a signing failure into the Arabic validation error', async () => {
+  it('turns a signing failure into the coded validation error', async () => {
     mockGetSignedUrl.mockRejectedValue(new Error('Could not load credentials from any providers'));
 
     const error = await rejection(service().createSignedUrl('albazourieh/citizen-1111/x.jpg', 60));
 
     expect(error).toBeInstanceOf(ValidationError);
-    expect(error.message).toBe('تعذّر فتح الملف');
+    expect(error).toMatchObject({ code: 'FILE_OPEN_FAILED' });
     expect(error.message).not.toContain('citizen-1111');
     expect(loggedErrors.join('\n')).toContain('albazourieh/citizen-1111/x.jpg');
   });

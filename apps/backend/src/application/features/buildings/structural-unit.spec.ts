@@ -68,35 +68,25 @@ describe('structural unit types', () => {
 describe('assertOccupiableUnit', () => {
   it('refuses an occupant on either kind of structural floor', () => {
     expect(() => assertOccupiableUnit({ unitType: 'PILOTIS', unitCode: '0001' })).toThrow(
-      'طابق أعمدة',
+      expect.objectContaining({ code: 'STRUCTURAL_UNIT_NO_OCCUPANT' }),
     );
     expect(() => assertOccupiableUnit({ unitType: 'EMPTY_FLOOR', unitCode: '0401' })).toThrow(
-      'طابق فارغ',
+      expect.objectContaining({ code: 'STRUCTURAL_UNIT_NO_OCCUPANT' }),
     );
   });
 
   /*
     The message names the type the officer actually chose. Telling someone who
     marked a floor «فارغ» that it is a «طابق أعمدة» is the kind of wrongness
-    that makes the rest of the sentence not worth reading.
+    that makes the rest of the sentence not worth reading. The words are the
+    message files' (`errors.STRUCTURAL_UNIT_NO_OCCUPANT`, a select on
+    `unitType`, which also names the way out: «اختر وحدة في أحد الطوابق
+    الأخرى»); the refusal carries the unit and the type it was given.
   */
-  it('names the type the officer chose, not the first structural one', () => {
-    expect(() => assertOccupiableUnit({ unitType: 'EMPTY_FLOOR', unitCode: '0401' })).not.toThrow(
-      /طابق أعمدة/,
-    );
-  });
-
-  /*
-    The message has to name the way out, not only the refusal. An officer who
-    reaches this has nearly always tapped a structural block on a grid where it
-    sits directly beside the flat they wanted — «الأخرى» rather than «فوقها»,
-    because a طابق فارغ is as often above the flats as below them.
-  */
-  it('names the unit and tells the officer what to do instead', () => {
+  it('names the unit and the type the officer chose, not the first structural one', () => {
     for (const unitType of STRUCTURAL_UNIT_TYPE) {
-      expect(() => assertOccupiableUnit({ unitType, unitCode: '0001' })).toThrow(/0001/);
       expect(() => assertOccupiableUnit({ unitType, unitCode: '0001' })).toThrow(
-        /الطوابق الأخرى/,
+        expect.objectContaining({ params: { unitCode: '0001', unitType } }),
       );
     }
   });

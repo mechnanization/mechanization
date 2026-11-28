@@ -993,7 +993,7 @@ describeIfDb('BuildingsService', () => {
           { unitId, citizenId: await citizen('سلمى'), role: 'TENANT' },
           actor(),
         ),
-      ).rejects.toThrow('مؤكَّد شغورها');
+      ).rejects.toThrow(expect.objectContaining({ code: 'UNIT_VACANCY_STANDING' }));
 
       expect(await db.unitOccupancy.count({ where: { unitId } })).toBe(0);
     });
@@ -1039,7 +1039,7 @@ describeIfDb('BuildingsService', () => {
 
       await expect(
         unitsService.updateUnit(unitId, { unitStatus: 'OWNER_OCCUPIED' }, actor()),
-      ).rejects.toThrow('ألغِ تأكيد الشغور');
+      ).rejects.toThrow(expect.objectContaining({ code: 'UNIT_VACANCY_CONFIRMED_EDIT' }));
     });
 
     it('closes the «شاغرة قيد التحقق» case the confirmation answers, and only that one', async () => {

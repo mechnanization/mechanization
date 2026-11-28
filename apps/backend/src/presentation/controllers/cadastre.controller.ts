@@ -78,7 +78,10 @@ export class CadastreController {
     @CurrentActor() actor: StaffActor,
   ) {
     if (!file) {
-      throw new ValidationError('لم يتم إرفاق ملف GeoJSON');
+      throw new ValidationError({
+        code: 'CADASTRE_FILE_MISSING',
+        message: 'No GeoJSON file attached',
+      });
     }
 
     return this.cadastreImport.importGeoJson({

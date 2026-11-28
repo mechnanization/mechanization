@@ -51,7 +51,10 @@ export class DocumentService {
     files: IncomingFile[];
   }): Promise<{ documentIds: string[] }> {
     if (input.files.length > APP_CONFIG.documents.maxFilesPerSubmission) {
-      throw new ValidationError('عدد الملفات كبير جداً');
+      throw new ValidationError({
+        code: 'DOCUMENT_TOO_MANY_FILES',
+        message: 'Too many files in one request',
+      });
     }
 
     // Validate everything before writing anything: a rejected 12th file should
@@ -66,16 +69,22 @@ export class DocumentService {
     for (const file of input.files) {
       const slot = slotByField.get(file.fieldName);
       if (!slot) {
-        throw new ValidationError(`ملف غير متوقع: ${file.fieldName}`);
+        throw new ValidationError({
+          code: 'DOCUMENT_UNEXPECTED_FILE',
+          message: `Unexpected file field ${file.fieldName}`,
+          params: { field: file.fieldName },
+        });
       }
 
       const propertyEntryId =
         slot.propertyIndex === undefined ? null : input.propertyIds[slot.propertyIndex];
 
       if (slot.propertyIndex !== undefined && !propertyEntryId) {
-        throw new ValidationError(
-          `الملف ${file.fieldName} مرتبط بعقار غير موجود في هذا الطلب`,
-        );
+        throw new ValidationError({
+          code: 'DOCUMENT_PROPERTY_NOT_IN_REQUEST',
+          message: `File ${file.fieldName} names a property not in the request`,
+          params: { field: file.fieldName },
+        });
       }
 
       const { storagePath } = await this.storage.upload({
@@ -121,7 +130,10 @@ export class DocumentService {
   }): Promise<{ url: string; expiresInSeconds: number }> {
     const document = await this.documents.findById(input.documentId);
     if (!document) {
-      throw new ValidationError('الملف غير موجود');
+      throw new ValidationError({
+        code: 'DOCUMENT_NOT_FOUND',
+        message: 'The document was not found',
+      });
     }
 
     const url = await this.storage.createSignedUrl(

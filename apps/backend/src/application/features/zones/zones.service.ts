@@ -121,7 +121,10 @@ export class ZonesService {
   /** One sector including the parcel numbers it owns, for the editor. */
   async get(id: string): Promise<ZoneDetail> {
     const zone = await this.zones.findById(id);
-    if (!zone) throw new NotFoundError('القطاع غير موجود');
+    if (!zone) throw new NotFoundError({
+      code: 'ZONE_NOT_FOUND',
+      message: 'Zone was not found',
+    });
     return { ...toSummary(zone), parcelNumbers: zone.parcelNumbers };
   }
 
@@ -131,7 +134,11 @@ export class ZonesService {
     actor: StaffActor,
   ): Promise<ZoneDetail> {
     const existing = await this.zones.findByCode(input.code);
-    if (existing) throw new ConflictError(`رمز القطاع "${input.code}" مستخدم بالفعل`);
+    if (existing) throw new ConflictError({
+      code: 'ZONE_CODE_TAKEN',
+      message: `Zone code ${input.code} is taken`,
+      params: { code: input.code },
+    });
 
     await this.validateParcels(tenantSlug, input.parcelNumbers);
 
@@ -163,11 +170,18 @@ export class ZonesService {
     actor: StaffActor,
   ): Promise<ZoneDetail> {
     const zone = await this.zones.findById(id);
-    if (!zone) throw new NotFoundError('القطاع غير موجود');
+    if (!zone) throw new NotFoundError({
+      code: 'ZONE_NOT_FOUND',
+      message: 'Zone was not found',
+    });
 
     if (input.code && input.code !== zone.code) {
       const clash = await this.zones.findByCode(input.code);
-      if (clash) throw new ConflictError(`رمز القطاع "${input.code}" مستخدم بالفعل`);
+      if (clash) throw new ConflictError({
+        code: 'ZONE_CODE_TAKEN',
+        message: `Zone code ${input.code} is taken`,
+        params: { code: input.code },
+      });
     }
 
     if (input.parcelNumbers) {
@@ -209,7 +223,10 @@ export class ZonesService {
     actor: StaffActor,
   ): Promise<void> {
     const zone = await this.zones.findById(id);
-    if (!zone) throw new NotFoundError('القطاع غير موجود');
+    if (!zone) throw new NotFoundError({
+      code: 'ZONE_NOT_FOUND',
+      message: 'Zone was not found',
+    });
 
     // Deleting a zone releases its parcels rather than touching them: membership
     // lives on the zone row, so the parcels are unassigned the moment it is gone.
@@ -258,9 +275,11 @@ export class ZonesService {
       const known = await this.parcels.findManyByNumber(parcelNumbers);
       const missing = parcelNumbers.filter((n) => !known.has(parcelNumberKey(n)));
       if (missing.length > 0) {
-        throw new ValidationError(
-          `${describe(missing)} غير موجود في السجل العقاري للبلدية`,
-        );
+        throw new ValidationError({
+          code: 'ZONE_PARCELS_NOT_IN_REGISTRY',
+          message: `${missing.length} parcels are not in the land register`,
+          params: parcelParams(missing),
+        });
       }
 
       const boundary = await this.assets.getCityBoundary(tenantSlug);
@@ -271,9 +290,11 @@ export class ZonesService {
           return !turf.booleanPointInPolygon([parcel.longitude, parcel.latitude], boundary);
         });
         if (outside.length > 0) {
-          throw new ValidationError(
-            `${describe(outside)} يقع خارج نطاق البلدية المعتمد ولا يمكن إضافته للقطاع`,
-          );
+          throw new ValidationError({
+            code: 'ZONE_PARCELS_OUTSIDE_BOUNDARY',
+            message: `${outside.length} parcels lie outside the boundary`,
+            params: parcelParams(outside),
+          });
         }
       }
     }
@@ -281,9 +302,11 @@ export class ZonesService {
     const owners = await this.zones.findOwnersOfParcels(parcelNumbers, excludeZoneId);
     if (owners.length > 0) {
       const zoneName = owners[0].zoneName;
-      throw new ConflictError(
-        `${describe(owners.map((o) => o.parcelNumber))} مضاف بالفعل إلى قطاع "${zoneName}"`,
-      );
+      throw new ConflictError({
+        code: 'ZONE_PARCELS_IN_OTHER_ZONE',
+        message: `${owners.length} parcels are already in another zone`,
+        params: { ...parcelParams(owners.map((o) => o.parcelNumber)), zoneName },
+      });
     }
   }
 
@@ -408,11 +431,15 @@ function toSummary(zone: Zone): ZoneSummary {
   };
 }
 
-/** "العقار رقم 12" / "العقارات 12، 15 و3 أخرى" — a list a clerk can act on. */
-function describe(parcelNumbers: readonly string[]): string {
-  if (parcelNumbers.length === 1) return `العقار رقم ${parcelNumbers[0]}`;
-
-  const named = parcelNumbers.slice(0, MAX_NAMED_PARCELS).join('، ');
-  const rest = parcelNumbers.length - MAX_NAMED_PARCELS;
-  return rest > 0 ? `العقارات ${named} و${rest} أخرى` : `العقارات ${named}`;
+/**
+ * A list a clerk can act on, as a refusal's params: the first numbers, how many
+ * there are, and how many more were left out. The message files word it
+ * («العقار رقم 12» / «العقارات 12، 15 و3 أخرى»).
+ */
+function parcelParams(parcelNumbers: readonly string[]): { parcels: string; count: number; more: number } {
+  return {
+    parcels: parcelNumbers.slice(0, MAX_NAMED_PARCELS).join(', '),
+    count: parcelNumbers.length,
+    more: Math.max(0, parcelNumbers.length - MAX_NAMED_PARCELS),
+  };
 }

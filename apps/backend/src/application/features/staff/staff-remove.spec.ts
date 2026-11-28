@@ -53,7 +53,7 @@ describe('StaffService.remove', () => {
 
   it('refuses deleting your own account', async () => {
     const { service, users } = setup({ id: 'admin-1', kind: 'STAFF' });
-    await expect(service.remove({ tenantSlug: 't', id: 'admin-1', actor: ADMIN })).rejects.toThrow('حسابك الخاص');
+    await expect(service.remove({ tenantSlug: 't', id: 'admin-1', actor: ADMIN })).rejects.toThrow(expect.objectContaining({ code: 'STAFF_SELF_DELETE' }));
     expect(users.hideStaff).not.toHaveBeenCalled();
   });
 
@@ -90,7 +90,7 @@ describe('an inspector still owed commission', () => {
   it('is not deleted until paid out', async () => {
     const { service, users } = setup({ id: 'insp-1', kind: 'STAFF', role: 'FIELD_INSPECTOR' as const });
     jest.spyOn(service, 'getInspectorProfile').mockResolvedValue({ pendingBalance: 40 } as never);
-    await expect(service.remove({ tenantSlug: 't', id: 'insp-1', actor: ADMIN })).rejects.toThrow('40.00');
+    await expect(service.remove({ tenantSlug: 't', id: 'insp-1', actor: ADMIN })).rejects.toThrow(expect.objectContaining({ code: 'STAFF_DELETE_HAS_PENDING_EARNINGS', params: { amount: '40.00' } }));
     expect(users.hideStaff).not.toHaveBeenCalled();
   });
 
@@ -100,7 +100,7 @@ describe('an inspector still owed commission', () => {
     for (const role of ['SUPER_ADMIN', 'COLLECTOR', 'ADMINISTRATIVE_OFFICER']) {
       const { service, users } = setup({ id: 'staff-9', kind: 'STAFF', role });
       jest.spyOn(service, 'getInspectorProfile').mockResolvedValue({ pendingBalance: 12.5 } as never);
-      await expect(service.remove({ tenantSlug: 't', id: 'staff-9', actor: ADMIN })).rejects.toThrow('12.50');
+      await expect(service.remove({ tenantSlug: 't', id: 'staff-9', actor: ADMIN })).rejects.toThrow(expect.objectContaining({ code: 'STAFF_DELETE_HAS_PENDING_EARNINGS', params: { amount: '12.50' } }));
       expect(users.hideStaff).not.toHaveBeenCalled();
     }
   });

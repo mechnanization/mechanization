@@ -330,7 +330,7 @@ describeIfDb('ParcelCorrectionService', () => {
     await expect(correct(wrong.id, 'PC-A7')).rejects.toMatchObject({ code: 'PARCEL_NUMBER_UNCHANGED' });
     await expect(
       correct(wrong.id, 'PC-F', { expectedUpdatedAt: new Date(Date.now() - 86_400_000).toISOString() }),
-    ).rejects.toThrow(/بعد أن فتحتَه/);
+    ).rejects.toThrow(expect.objectContaining({ code: 'BUILDING_EDITED_SINCE_OPENED' }));
 
     // PC-F already carries the building an earlier test corrected onto it: answered here.
     const result = await correct(wrong.id, 'PC-F', {

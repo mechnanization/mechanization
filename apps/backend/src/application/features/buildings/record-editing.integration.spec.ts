@@ -156,7 +156,7 @@ describeIfDb('record editing', () => {
     it('refuses a count that leaves units outside the building, naming them', async () => {
       const { building } = await block('EDIT-F1');
 
-      await expect(buildings.update(building.id, { floorsCount: 2 }, actor())).rejects.toThrow(/0201/);
+      await expect(buildings.update(building.id, { floorsCount: 2 }, actor())).rejects.toThrow(expect.objectContaining({ code: 'BUILDING_FLOORS_EXCLUDE_UNITS', params: expect.objectContaining({ unitCodes: '0201' }) }));
 
       const stored = await db.building.findUniqueOrThrow({ where: { id: building.id } });
       expect(stored.floorsCount).toBe(3);
@@ -198,7 +198,7 @@ describeIfDb('record editing', () => {
       await db.unitOccupancy.create({ data: { unitId: units[0]!.id, citizenId: tenantId, role: 'TENANT' } });
 
       await expect(unitsService.updateUnit(units[0]!.id, { unitType: 'APARTMENT' }, actor())).rejects.toThrow(
-        /سامي تجربة/,
+        expect.objectContaining({ code: 'NON_RESIDENT_TENANT_ON_DWELLING', params: expect.objectContaining({ names: 'سامي تجربة' }) }),
       );
       const stored = await db.unit.findUniqueOrThrow({ where: { id: units[0]!.id } });
       expect(stored.unitType).toBe('SHOP');
@@ -216,7 +216,7 @@ describeIfDb('record editing', () => {
       });
 
       await expect(unitsService.updateUnit(units[0]!.id, { unitType: 'APARTMENT' }, actor())).rejects.toThrow(
-        /رامي تجربة/,
+        expect.objectContaining({ code: 'NON_RESIDENT_TENANT_ON_DWELLING', params: expect.objectContaining({ names: 'رامي تجربة' }) }),
       );
     });
 
@@ -245,7 +245,7 @@ describeIfDb('record editing', () => {
 
       await expect(
         unitsService.updateUnit(units[0]!.id, { unitStatus: 'OWNER_OCCUPIED' }, actor()),
-      ).rejects.toThrow(/مسكن موسمي/);
+      ).rejects.toThrow(expect.objectContaining({ code: 'OWNER_OCCUPIED_BY_NON_RESIDENT' }));
     });
   });
 

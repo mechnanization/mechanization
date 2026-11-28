@@ -422,7 +422,10 @@ export class PrismaUserRepository implements UserRepository {
       select: { id: true },
     });
     if (existing) {
-      throw new ConflictError('هذا البريد الإلكتروني مستخدم بالفعل');
+      throw new ConflictError({
+        code: 'STAFF_EMAIL_TAKEN',
+        message: 'The email is taken by another staff account',
+      });
     }
 
     const row = await this.db.user.create({
@@ -457,7 +460,10 @@ export class PrismaUserRepository implements UserRepository {
         select: { id: true },
       });
       if (clash) {
-        throw new ConflictError('هذا البريد الإلكتروني مستخدم بالفعل');
+        throw new ConflictError({
+          code: 'STAFF_EMAIL_TAKEN',
+          message: 'The email is taken by another staff account',
+        });
       }
     }
 
@@ -556,14 +562,23 @@ export class PrismaUserRepository implements UserRepository {
       if (isUniqueViolationOn(error, 'referenceNumber')) {
         // Astronomically unlikely (32^6 per prefix per month) but a silent
         // collision would hand one citizen another's tracking code.
-        return new ConflictError('تعذّر إنشاء رقم مرجعي فريد — يرجى المحاولة مرة أخرى');
+        return new ConflictError({
+          code: 'REFERENCE_NUMBER_GENERATION_FAILED',
+          message: 'Reference number collision',
+        });
       }
       if (isUniqueViolationOn(error, 'email')) {
-        return new ConflictError('هذا البريد الإلكتروني مسجّل مسبقاً');
+        return new ConflictError({
+          code: 'EMAIL_TAKEN',
+          message: 'Unique violation on email',
+        });
       }
       // Not every unique column is a document: the generic sentence, as the
       // registration repository says it.
-      return new ConflictError('هذه البيانات مسجّلة مسبقاً');
+      return new ConflictError({
+        code: 'RECORD_ALREADY_EXISTS',
+        message: 'Unique violation',
+      });
     }
     return error;
   }

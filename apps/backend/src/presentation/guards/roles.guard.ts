@@ -51,11 +51,17 @@ export class RolesGuard implements CanActivate {
     const user = request.user;
 
     if (!user || user.kind !== 'STAFF') {
-      throw new ForbiddenError('This action is restricted to municipality staff');
+      throw new ForbiddenError({
+        code: 'STAFF_ONLY_ACTION',
+        message: 'This action is restricted to municipality staff',
+      });
     }
 
     if (!user.role || !required.includes(user.role)) {
-      throw new ForbiddenError('You do not have permission to perform this action');
+      throw new ForbiddenError({
+        code: 'ROLE_NOT_PERMITTED',
+        message: 'You do not have permission to perform this action',
+      });
     }
 
     return true;

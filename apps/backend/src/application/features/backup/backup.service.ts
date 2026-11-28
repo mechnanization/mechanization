@@ -382,23 +382,34 @@ export class BackupService {
         'utf8',
       );
     } catch {
-      throw new ValidationError('الملف ليس نسخة احتياطية صالحة (تعذّر فك الضغط).');
+      throw new ValidationError({
+        code: 'BACKUP_FILE_UNREADABLE',
+        message: 'The backup could not be decompressed',
+      });
     }
 
     let snapshot: Snapshot;
     try {
       snapshot = JSON.parse(text) as Snapshot;
     } catch {
-      throw new ValidationError('محتوى النسخة الاحتياطية غير صالح.');
+      throw new ValidationError({
+        code: 'BACKUP_CONTENT_INVALID',
+        message: 'The backup content is not valid JSON',
+      });
     }
 
     if (!snapshot?.manifest || !snapshot.tables) {
-      throw new ValidationError('النسخة الاحتياطية لا تحتوي على بيان أو جداول.');
+      throw new ValidationError({
+        code: 'BACKUP_MANIFEST_MISSING',
+        message: 'The backup has no manifest or tables',
+      });
     }
     if (snapshot.manifest.version !== SNAPSHOT_VERSION) {
-      throw new ValidationError(
-        `إصدار النسخة (${snapshot.manifest.version}) لا يطابق الإصدار المدعوم (${SNAPSHOT_VERSION}).`,
-      );
+      throw new ValidationError({
+        code: 'BACKUP_VERSION_MISMATCH',
+        message: `Snapshot version ${snapshot.manifest.version} is not ${SNAPSHOT_VERSION}`,
+        params: { version: snapshot.manifest.version, supported: SNAPSHOT_VERSION },
+      });
     }
 
     return snapshot;
@@ -433,13 +444,18 @@ export class BackupService {
      * replaced by another's.
      */
     if (manifest.tenantSlug !== scope.tenantSlug) {
-      throw new ValidationError(
-        `هذه النسخة تخصّ «${manifest.tenantSlug}» ولا يمكن استعادتها في «${scope.tenantSlug}».`,
-      );
+      throw new ValidationError({
+        code: 'BACKUP_OTHER_MUNICIPALITY',
+        message: `The snapshot is of ${manifest.tenantSlug}, not ${scope.tenantSlug}`,
+        params: { snapshotTenant: manifest.tenantSlug, tenant: scope.tenantSlug },
+      });
     }
 
     if (options.confirmTenantSlug.trim() !== scope.tenantSlug) {
-      throw new ValidationError('اكتب اسم البلدية كما هو للتأكيد.');
+      throw new ValidationError({
+        code: 'BACKUP_CONFIRMATION_MISMATCH',
+        message: 'The typed municipality name does not match',
+      });
     }
 
     /*
@@ -452,9 +468,11 @@ export class BackupService {
     const missing = current.filter((name) => !manifest.migrations.includes(name));
     const extra = manifest.migrations.filter((name) => !current.includes(name));
     if (missing.length > 0 || extra.length > 0) {
-      throw new ValidationError(
-        `النسخة أُخذت من قاعدة بإصدار مختلف (فرق: ${[...missing, ...extra].join('، ')}).`,
-      );
+      throw new ValidationError({
+        code: 'BACKUP_SCHEMA_MISMATCH',
+        message: 'The snapshot was taken from another schema version',
+        params: { tables: [...missing, ...extra].join(', ') },
+      });
     }
 
     /**
@@ -468,7 +486,11 @@ export class BackupService {
       (name) => !TABLE_ORDER.includes(name as TableName) || NEVER_RESTORED.has(name),
     );
     if (unknownTables.length > 0) {
-      throw new ValidationError(`جداول غير معروفة في النسخة: ${unknownTables.join('، ')}.`);
+      throw new ValidationError({
+        code: 'BACKUP_UNKNOWN_TABLES',
+        message: 'The snapshot holds unknown tables',
+        params: { tables: unknownTables.join(', ') },
+      });
     }
 
     if (options.dryRun) {

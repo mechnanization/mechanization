@@ -303,7 +303,10 @@ export class DataQualityService {
       where: { kind_subjectKey: { kind: input.kind, subjectKey: input.subjectKey } },
       select: { id: true },
     });
-    if (existing) throw new ConflictError('هذه الملاحظة مُعلَّمة «ليست مشكلة» بالفعل.');
+    if (existing) throw new ConflictError({
+      code: 'QUALITY_ALREADY_DISMISSED',
+      message: 'The finding is already dismissed',
+    });
 
     await this.db.dataQualityDismissal.create({
       data: { kind: input.kind, subjectKey: input.subjectKey, reason: input.reason, dismissedById: actor.id },
@@ -323,7 +326,10 @@ export class DataQualityService {
       where: { kind_subjectKey: { kind, subjectKey } },
       select: { id: true, reason: true },
     });
-    if (!existing) throw new NotFoundError('لا يوجد تعليم «ليست مشكلة» على هذه الملاحظة.');
+    if (!existing) throw new NotFoundError({
+      code: 'QUALITY_DISMISSAL_NOT_FOUND',
+      message: 'The finding is not dismissed',
+    });
     await this.db.dataQualityDismissal.delete({ where: { id: existing.id } });
     this.events.emit('quality.changed', {
       tenantSlug: this.tenantContext.tenantSlug,

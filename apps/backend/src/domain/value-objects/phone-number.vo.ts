@@ -18,7 +18,10 @@ export class PhoneNumber {
     const national = stripped.replace(/^(\+961|00961|0)/, '');
 
     if (!MOBILE_PATTERN.test(national)) {
-      throw new ValidationError('رقم الهاتف غير صالح');
+      throw new ValidationError({
+        code: 'PHONE_NUMBER_INVALID',
+        message: 'The phone number is not valid',
+      });
     }
 
     return new PhoneNumber(`+961${national}`);

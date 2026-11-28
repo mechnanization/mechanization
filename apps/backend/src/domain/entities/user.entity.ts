@@ -67,7 +67,10 @@ export class User extends AggregateRoot {
 
   static staff(props: StaffProps): User {
     if (!props.email.includes('@')) {
-      throw new ValidationError('A staff account requires a valid email');
+      throw new ValidationError({
+        code: 'STAFF_EMAIL_REQUIRED',
+        message: 'A staff account requires a valid email',
+      });
     }
     return new User(props.id, 'STAFF', props.tenantSlug, { ...props });
   }
@@ -167,7 +170,10 @@ export class User extends AggregateRoot {
    */
   assertMayStartSession(): void {
     if (!this.isActive) {
-      throw new ForbiddenError('This account has been deactivated');
+      throw new ForbiddenError({
+        code: 'ACCOUNT_DEACTIVATED',
+        message: 'This account has been deactivated',
+      });
     }
   }
 

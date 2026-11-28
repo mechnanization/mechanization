@@ -98,7 +98,10 @@ export class StaffService {
   async restore(input: { tenantSlug: string; id: string; actor: StaffActor }): Promise<void> {
     const target = await this.users.findById(input.id);
     if (!target || target.kind !== 'STAFF' || !(await this.users.isStaffHidden(input.id))) {
-      throw new NotFoundError('Deleted staff user', input.id);
+      throw new NotFoundError({
+        code: 'DELETED_STAFF_NOT_FOUND',
+        message: 'Deleted staff was not found',
+      });
     }
     await this.users.restoreStaff(input.id);
     this.events.emit('staff.changed', {
@@ -176,7 +179,10 @@ export class StaffService {
     const user = await this.users.findById(staffId);
     // A deleted account gets no new second factor: restore it first, deliberately.
     if (!user || user.kind !== 'STAFF' || (await this.users.isStaffHidden(staffId))) {
-      throw new NotFoundError('Staff user', staffId);
+      throw new NotFoundError({
+        code: 'STAFF_NOT_FOUND',
+        message: 'Staff was not found',
+      });
     }
 
     const secret = this.totp.generateSecret();
@@ -201,13 +207,19 @@ export class StaffService {
   }): Promise<void> {
     const target = await this.users.findById(input.id);
     if (!target || target.kind !== 'STAFF' || (await this.users.isStaffHidden(input.id))) {
-      throw new NotFoundError('Staff user', input.id);
+      throw new NotFoundError({
+        code: 'STAFF_NOT_FOUND',
+        message: 'Staff was not found',
+      });
     }
 
     // Demoting yourself out of SUPER_ADMIN can leave a municipality with no
     // one able to manage accounts at all — including no one able to undo it.
     if (sameId(input.id, input.actor.id) && input.role && input.role !== 'SUPER_ADMIN') {
-      throw new ForbiddenError('لا يمكنك تغيير صلاحيتك الخاصة');
+      throw new ForbiddenError({
+        code: 'STAFF_SELF_ROLE_CHANGE',
+        message: 'A staff member cannot change their own role',
+      });
     }
 
     await this.users.updateStaff(input.id, {
@@ -252,12 +264,18 @@ export class StaffService {
   }): Promise<void> {
     const target = await this.users.findById(input.id);
     if (!target || target.kind !== 'STAFF' || (await this.users.isStaffHidden(input.id))) {
-      throw new NotFoundError('Staff user', input.id);
+      throw new NotFoundError({
+        code: 'STAFF_NOT_FOUND',
+        message: 'Staff was not found',
+      });
     }
 
     // Locking yourself out is not a decision worth honouring at 2am.
     if (sameId(input.id, input.actor.id) && !input.isActive) {
-      throw new ForbiddenError('لا يمكنك إلغاء تفعيل حسابك الخاص');
+      throw new ForbiddenError({
+        code: 'STAFF_SELF_DEACTIVATE',
+        message: 'A staff member cannot deactivate their own account',
+      });
     }
 
     await this.users.setStaffActive(input.id, input.isActive);
@@ -292,11 +310,17 @@ export class StaffService {
   }): Promise<void> {
     const target = await this.users.findById(input.id);
     if (!target || target.kind !== 'STAFF' || (await this.users.isStaffHidden(input.id))) {
-      throw new NotFoundError('Staff user', input.id);
+      throw new NotFoundError({
+        code: 'STAFF_NOT_FOUND',
+        message: 'Staff was not found',
+      });
     }
 
     if (sameId(input.id, input.actor.id)) {
-      throw new ForbiddenError('لا يمكنك حذف حسابك الخاص');
+      throw new ForbiddenError({
+        code: 'STAFF_SELF_DELETE',
+        message: 'A staff member cannot delete their own account',
+      });
     }
 
     /*
@@ -308,9 +332,11 @@ export class StaffService {
     */
     const { pendingBalance } = await this.getInspectorProfile(input.tenantSlug, input.id);
     if (pendingBalance > 0) {
-      throw new ConflictError(
-        `لا يمكن حذف هذا الحساب: له عمولات مستحقة بقيمة ${pendingBalance.toFixed(2)} $ لم تُدفع بعد. سدّدها من «الأرباح والدفعات» ثم احذفه`,
-      );
+      throw new ConflictError({
+        code: 'STAFF_DELETE_HAS_PENDING_EARNINGS',
+        message: 'The account is owed unpaid commissions',
+        params: { amount: pendingBalance.toFixed(2) },
+      });
     }
 
     await this.users.hideStaff(input.id);
@@ -339,12 +365,18 @@ export class StaffService {
   }): Promise<void> {
     const target = await this.users.findById(input.staffId);
     if (!target || target.kind !== 'STAFF' || !target.passwordHash) {
-      throw new NotFoundError('Staff user', input.staffId);
+      throw new NotFoundError({
+        code: 'STAFF_NOT_FOUND',
+        message: 'Staff was not found',
+      });
     }
 
     const match = await this.hasher.verify(input.currentPassword, target.passwordHash);
     if (!match) {
-      throw new UnauthorizedError('كلمة المرور الحالية غير صحيحة');
+      throw new UnauthorizedError({
+        code: 'STAFF_CURRENT_PASSWORD_INCORRECT',
+        message: 'The current password is incorrect',
+      });
     }
 
     const passwordHash = await this.hasher.hash(input.newPassword);
@@ -373,12 +405,18 @@ export class StaffService {
   }): Promise<{ email: string }> {
     const target = await this.users.findById(input.staffId);
     if (!target || target.kind !== 'STAFF' || !target.passwordHash) {
-      throw new NotFoundError('Staff user', input.staffId);
+      throw new NotFoundError({
+        code: 'STAFF_NOT_FOUND',
+        message: 'Staff was not found',
+      });
     }
 
     const match = await this.hasher.verify(input.currentPassword, target.passwordHash);
     if (!match) {
-      throw new UnauthorizedError('كلمة المرور الحالية غير صحيحة');
+      throw new UnauthorizedError({
+        code: 'STAFF_CURRENT_PASSWORD_INCORRECT',
+        message: 'The current password is incorrect',
+      });
     }
 
     const nextEmail = input.newEmail.trim().toLowerCase();
@@ -388,7 +426,10 @@ export class StaffService {
 
     const existing = await this.users.findStaffByEmail(nextEmail);
     if (existing) {
-      throw new ConflictError('البريد الإلكتروني مستخدم بالفعل من قبل موظف آخر');
+      throw new ConflictError({
+        code: 'STAFF_EMAIL_TAKEN',
+        message: 'The email is taken by another staff account',
+      });
     }
 
     await this.users.updateStaff(input.staffId, { email: nextEmail });
@@ -410,7 +451,10 @@ export class StaffService {
   }): Promise<{ message: string }> {
     const user = await this.users.findById(input.staffId);
     if (!user || !user.email || user.kind !== 'STAFF' || (await this.users.isStaffHidden(input.staffId))) {
-      throw new NotFoundError('Staff user', input.staffId);
+      throw new NotFoundError({
+        code: 'STAFF_NOT_FOUND',
+        message: 'Staff was not found',
+      });
     }
     // One implementation, in IdentityService: the link is a signed token tied
     // to this account's tokenVersion, and duplicating that here would be two
@@ -450,7 +494,10 @@ export class StaffService {
     });
 
     if (!inspector) {
-      throw new NotFoundError('Staff user', inspectorId);
+      throw new NotFoundError({
+        code: 'STAFF_NOT_FOUND',
+        message: 'Staff was not found',
+      });
     }
 
     /*
@@ -789,7 +836,10 @@ export class StaffService {
         const profile = await this.getInspectorProfile(input.tenantSlug, input.inspectorId);
         // A deleted account was settled before it went (see `remove`); paying it now has no basis.
         if (await this.users.isStaffHidden(input.inspectorId)) {
-          throw new ConflictError('هذا الحساب محذوف — استعده أولاً إن كان له مستحقات');
+          throw new ConflictError({
+            code: 'STAFF_ACCOUNT_DELETED',
+            message: 'The account is deleted',
+          });
         }
         return profile;
       };
@@ -798,7 +848,11 @@ export class StaffService {
         const allowance = payoutAllowance({ pendingBalance: profile.pendingBalance });
         const refusal = payoutRefusal(allowance, payload.amount, { showOwed });
         if (refusal) {
-          throw new ValidationError(refusal);
+          throw new ValidationError({
+            code: refusal.code,
+            message: `Payout refused: ${refusal.code}`,
+            params: refusal.params,
+          });
         }
       };
 
@@ -968,7 +1022,10 @@ export class StaffService {
 
     const paidAt = payload.paidAt ? new Date(payload.paidAt) : new Date();
     if (Number.isNaN(paidAt.getTime())) {
-      throw new ValidationError('تاريخ الدفع غير صالح.');
+      throw new ValidationError({
+        code: 'PAYOUT_DATE_INVALID',
+        message: 'The payout date is not valid',
+      });
     }
     /*
       A payout is dated the day the cash was handed over, which has happened.

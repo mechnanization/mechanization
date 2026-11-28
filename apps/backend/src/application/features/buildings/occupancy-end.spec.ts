@@ -125,7 +125,7 @@ describe('endOccupancy', () => {
 
     await expect(
       occupancy(db).endOccupancy('occ-1', { reason: 'MOVED_OUT' }, actor),
-    ).rejects.toThrow('منتهٍ مسبقاً');
+    ).rejects.toThrow(expect.objectContaining({ code: 'OCCUPANCY_ALREADY_ENDED' }));
     expect(update).not.toHaveBeenCalled();
   });
 
@@ -134,7 +134,7 @@ describe('endOccupancy', () => {
 
     await expect(
       occupancy(db).endOccupancy('occ-1', { reason: 'MOVED_OUT' }, actor),
-    ).rejects.toThrow('بيع أو نقل ملكية');
+    ).rejects.toThrow(expect.objectContaining({ code: 'OWNERSHIP_END_REASON_INVALID' }));
     expect(update).not.toHaveBeenCalled();
   });
 
@@ -154,7 +154,7 @@ describe('endOccupancy', () => {
         { reason: 'OWNERSHIP_TRANSFERRED', toDate: new Date('2025-06-01') },
         actor,
       ),
-    ).rejects.toThrow('قبل تاريخ بدء');
+    ).rejects.toThrow(expect.objectContaining({ code: 'OCCUPANCY_END_BEFORE_START' }));
     expect(update).not.toHaveBeenCalled();
   });
 });
@@ -291,7 +291,7 @@ describe('confirmVacancy / updateUnit — calling a unit empty', () => {
 
     await expect(
       visits(db).confirmVacancy('unit-1', { basis: 'FIELD_INSPECTION' }, actor),
-    ).rejects.toThrow('كشاغرة');
+    ).rejects.toThrow(expect.objectContaining({ code: 'UNIT_VACANT_HAS_OCCUPANTS' }));
     expect(update).not.toHaveBeenCalled();
   });
 
@@ -300,7 +300,7 @@ describe('confirmVacancy / updateUnit — calling a unit empty', () => {
 
     await expect(
       visits(db).confirmVacancy('unit-1', { basis: 'FIELD_INSPECTION' }, actor),
-    ).rejects.toThrow('مسكن موسمي');
+    ).rejects.toThrow(expect.objectContaining({ code: 'UNIT_SEASONAL_NOT_VACANT' }));
     expect(update).not.toHaveBeenCalled();
   });
 
@@ -309,7 +309,7 @@ describe('confirmVacancy / updateUnit — calling a unit empty', () => {
 
     await expect(
       visits(db).confirmVacancy('unit-1', { basis: 'OWNER_STATEMENT' }, actor),
-    ).rejects.toThrow('مسكن موسمي');
+    ).rejects.toThrow(expect.objectContaining({ code: 'UNIT_SEASONAL_NOT_VACANT' }));
     expect(update).not.toHaveBeenCalled();
   });
 
@@ -350,7 +350,7 @@ describe('confirmVacancy / updateUnit — calling a unit empty', () => {
 
     await expect(
       visits(db).confirmVacancy('unit-1', { basis: 'FIELD_INSPECTION' }, actor),
-    ).rejects.toThrow('مؤكَّد شغورها مسبقاً');
+    ).rejects.toThrow(expect.objectContaining({ code: 'UNIT_VACANCY_ALREADY_CONFIRMED' }));
     expect(update).not.toHaveBeenCalled();
   });
 
@@ -369,7 +369,7 @@ describe('confirmVacancy / updateUnit — calling a unit empty', () => {
         { unitStatus: 'VACANT', surveyStatus: 'VACANT_CONFIRMED' },
         actor,
       ),
-    ).rejects.toThrow('«تأكيد الشغور»');
+    ).rejects.toThrow(expect.objectContaining({ code: 'UNIT_VACANCY_USE_CONFIRMATION' }));
     expect(update).not.toHaveBeenCalled();
   });
 
@@ -380,7 +380,7 @@ describe('confirmVacancy / updateUnit — calling a unit empty', () => {
 
     await expect(
       units(db).updateUnit('unit-1', { unitStatus: 'RENTED' }, actor),
-    ).rejects.toThrow('ألغِ تأكيد الشغور');
+    ).rejects.toThrow(expect.objectContaining({ code: 'UNIT_VACANCY_CONFIRMED_EDIT' }));
     expect(update).not.toHaveBeenCalled();
   });
 
@@ -399,7 +399,7 @@ describe('confirmVacancy / updateUnit — calling a unit empty', () => {
 
     await expect(
       units(db).updateUnit('unit-1', { unitStatus: 'VACANT' }, actor),
-    ).rejects.toThrow('كشاغرة');
+    ).rejects.toThrow(expect.objectContaining({ code: 'UNIT_VACANT_HAS_OCCUPANTS' }));
     expect(update).not.toHaveBeenCalled();
   });
 });
@@ -513,7 +513,7 @@ describe('endVacancy', () => {
 
     await expect(
       visits(store).endVacancy('unit-1', { reason: 'RECORDED_IN_ERROR' }, actor),
-    ).rejects.toThrow('لا يوجد تأكيد شغور قائم');
+    ).rejects.toThrow(expect.objectContaining({ code: 'UNIT_NO_STANDING_VACANCY' }));
     expect(store.unit.update).not.toHaveBeenCalled();
   });
 
@@ -526,7 +526,7 @@ describe('endVacancy', () => {
         { reason: 'NO_LONGER_VACANT', endedAt: new Date('2026-08-01') },
         actor,
       ),
-    ).rejects.toThrow('قبل تاريخ تأكيد الشغور');
+    ).rejects.toThrow(expect.objectContaining({ code: 'VACANCY_END_BEFORE_CONFIRMATION' }));
     expect(store.unit.update).not.toHaveBeenCalled();
   });
 });

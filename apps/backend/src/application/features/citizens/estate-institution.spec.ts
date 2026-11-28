@@ -103,7 +103,7 @@ describe('«تركة (ورثة المرحوم)»', () => {
     expect(failures(estate({ properties: [house] }))).toContain('properties.0.unitStatus');
     expect(() =>
       assertNonResidentOccupancy({ unitCode: '0001', unitType: 'APARTMENT', residence: 'ESTATE', role: 'OWNER', unitStatus: 'SEASONAL' }),
-    ).toThrow('المرحوم لا يسكن');
+    ).toThrow(expect.objectContaining({ code: 'OWNER_DOES_NOT_LIVE_THERE', params: expect.objectContaining({ residence: 'ESTATE' }) }));
     // A non-resident's seasonal home is what «مسكن موسمي» is for.
     expect(() =>
       assertNonResidentOccupancy({
@@ -181,7 +181,7 @@ describe('«جهة أو وقف»', () => {
     expect(failures(institution({ properties: [house] }))).toContain('properties.0.unitStatus');
     expect(() =>
       assertNonResidentOccupancy({ unitCode: '0001', unitType: 'APARTMENT', residence: 'INSTITUTION', role: 'OWNER', unitStatus: 'SEASONAL' }),
-    ).toThrow('الجهة لا تسكن');
+    ).toThrow(expect.objectContaining({ code: 'OWNER_DOES_NOT_LIVE_THERE', params: expect.objectContaining({ residence: 'INSTITUTION' }) }));
   });
 
   it('may rent an office, as a non-resident may, but not a home', () => {
@@ -209,10 +209,10 @@ describe('the matrix refuses the same', () => {
   it('an estate or a body living in a home, in its own words', () => {
     expect(() =>
       assertNonResidentOccupancy({ ...base, residence: 'ESTATE', role: 'OWNER', unitStatus: 'OWNER_OCCUPIED' }),
-    ).toThrow('المرحوم لا يسكن');
+    ).toThrow(expect.objectContaining({ code: 'OWNER_DOES_NOT_LIVE_THERE', params: expect.objectContaining({ residence: 'ESTATE' }) }));
     expect(() =>
       assertNonResidentOccupancy({ ...base, residence: 'INSTITUTION', role: 'OWNER', unitStatus: 'OWNER_OCCUPIED' }),
-    ).toThrow('الجهة لا تسكن');
+    ).toThrow(expect.objectContaining({ code: 'OWNER_DOES_NOT_LIVE_THERE', params: expect.objectContaining({ residence: 'INSTITUTION' }) }));
   });
 
   it('and allows the estate’s family-occupied home and the body’s rented office', () => {
